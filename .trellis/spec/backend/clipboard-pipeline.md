@@ -136,3 +136,94 @@ loop suppression, and repository behavior. Real system clipboard round trips are
 marked `#[ignore = "touches the real system clipboard; ..."]` in
 `clipboard/read.rs`, `clipboard/write.rs`, and `clipboard/watcher.rs`. Run those
 ignored tests only in a desktop session when changing native clipboard behavior.
+
+## Scenario: Current Clipboard Plain-Text Conversion
+
+### 1. Scope / Trigger
+
+`clipboard/plain_text.rs` converts current OS content independently of history,
+capture filters, and window visibility. This is different from plain-pasting a
+selected history row.
+
+### 2. Signatures
+
+- `convert_current_clipboard_to_plain_text(&WritebackGuard) -> Result<PlainTextConversionResult>`
+- Tauri command `convert_current_clipboard_to_plain_text(AppHandle)` delegates directly.
+- Results serialize as `converted | unchanged | unsupported | changed | busy`.
+
+### 3. Contracts
+
+Explicit Markdown/HTML in native Text is parsed; HTML-only uses structured DOM extraction. Native Text without markup keeps exact whitespace when rich formats are stripped. Text-only ordinary/empty content, images/files/mixed non-text and RTF-only are preserved. No history ID,
+database insertion, reuse timestamp, simulated paste, or window side effect.
+
+AtomicBool/RAII prevents concurrent work. OS clipboard generation plus a second
+snapshot and final pre-write generation check cancel detected changes. This is
+not a cross-process atomic transaction; `set` may partially change contents on
+failure. Do not retry or overwrite a newer clipboard with a recovery snapshot.
+
+Tracked Guard tokens cancel only the current registration on failure. Hash the
+same trimmed content as ingest while writing the original untrimmed Text.
+Successful conversion tokens also require the written clipboard generation,
+so a later real copy of identical text is not suppressed after paused capture.
+
+The watcher registers `Arc<WritebackGuard>` as Tauri managed state. Command and
+global conversion entry points must retrieve that exact type and pass
+`guard.inner().as_ref()` to the conversion service. Tauri state uses exact type
+identity: retrieving `WritebackGuard` directly panics before conversion, and a
+fresh guard would break suppression shared with the watcher. Low-level service
+tests alone cannot verify this application-state wiring.
+
+### 4. Validation & Error Matrix
+
+- Current content changed -> `changed`, no write; global path reports cancellation.
+- Conversion in flight -> `busy`, no write.
+- Unsupported formats -> `unsupported`, no write; native localized feedback.
+- Read/write failure -> AppError; cancel this Guard token, report possible partial write.
+
+### 5. Good/Base/Bad Cases
+
+- Good: native Text plus HTML becomes only Text with original line endings.
+- Base: plain Text remains unchanged.
+- Bad: HTML-only markup must never be returned as purported plain Text.
+
+### 6. Tests Required
+
+Fault-inject read/write errors, changed generations/snapshots, concurrent calls,
+tracked cancellation, trimmed hashes, and later identical real copy. Real OS
+format/focus assertions require Windows and macOS desktop sessions. Unavailable
+toolchains/devices must be recorded as pending, not counted as passing.
+
+### 7. Wrong vs Correct
+
+Wrong: route current conversion through `paste_clipboard_item(history_id, true)`.
+Correct: call the independent conversion service with the shared WritebackGuard.
+
+### Markup parsing contract (2026-10-02)
+
+`markup::convert_markup(&str) -> Option<String>` recognizes explicit CommonMark
+syntax plus tables/strikethrough/task lists. None means preserve the native Text
+exactly. `html_to_text(&str) -> String` traverses an HTML5 DOM without executing
+scripts or loading resources. `pulldown-cmark = 0.13` (locked 0.13.4, upstream
+rust-version 1.71.1) and existing transitive `dom_query = 0.27` (now direct,
+rust-version 1.75) are compiled on the project Rust 1.96 baseline; those upstream
+MSRVs are not a newly verified project minimum.
+
+Links retain titles, images retain alt, table cells use tabs, and list indentation
+remains without generated bullets or ordered numbers. Remove markers through DOM
+list structure, never by deleting dashes from rendered text. Escaped Markdown
+markers are literal body text; `a-b`, negative values, and dashes inside code remain.
+Fenced/inline code is escaped by the Markdown renderer,
+so `<b>` / `**` inside code remain literal; pre preserves internal whitespace.
+Ordinary comparison/generic/path text stays intact. HTML whitespace collapses
+outside pre; entities decode, block boundaries/br produce line breaks, and
+script/style/head/template/noscript/iframe/object/embed subtrees are skipped.
+Native readable Text takes precedence over a rich HTML fallback; empty/missing
+native Text may fall back to HTML. Empty rendered output is unsupported and never
+replaces the clipboard. Unknown Text-only tags are conservatively preserved.
+
+Parse before the second snapshot/generation check. Guard hashes the final output
+using the ingest trim rule, while the native write retains the output whitespace.
+Good: `**重要**` and `<b>重要</b>` -> `重要`; HTML-only -> Text. Bad: regex removal
+of stars/angle brackets or parsing escaped code as HTML. Verification must cover
+markup samples plus the existing write failure, snapshot mutation, in-flight and
+same-content real-copy Guard assertions; OS focus/format checks remain separate.

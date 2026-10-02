@@ -137,6 +137,10 @@
       },
       "window": {
         "title": "Clipboard Window"
+      },
+      "windowShortcuts": {
+        "description": "Customize common list actions. Navigation, preview, and numbered paste retain their defaults.",
+        "title": "Clipboard window shortcuts"
       }
     },
     "settings": {
@@ -527,6 +531,11 @@
         }
       },
       "shortcuts": {
+        "convertToPlainText": {
+          "description": "Convert current clipboard Markdown, HTML, or rich text to plain text, preserving body text and code without pasting. Images, files, and RTF-only content remain unchanged.",
+          "placeholder": "Record global shortcut",
+          "title": "Convert current clipboard to plain text"
+        },
         "openClipboard": {
           "description": "Open or hide the clipboard window.",
           "placeholder": "Alt+C",
@@ -632,6 +641,53 @@
           },
           "title": "Select Range on Open"
         }
+      },
+      "windowShortcuts": {
+        "copy": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Copy selected item"
+        },
+        "delete": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Delete selected item"
+        },
+        "deleteForward": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Delete selected item (alternate)"
+        },
+        "favorite": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Favorite selected item"
+        },
+        "note": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Edit note"
+        },
+        "open": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Open selected item"
+        },
+        "paste": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Paste selected item"
+        },
+        "pastePlain": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Paste selected item as plain text"
+        },
+        "pin": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Pin selected item"
+        }
       }
     },
     "tabs": {
@@ -661,6 +717,14 @@
   "search": {
     "empty": "No matching settings",
     "placeholder": "Search settings"
+  },
+  "shortcutSettings": {
+    "active": "Registered in the system",
+    "failed": "Inactive: {{reason}}",
+    "paused": "Paused while recording; registration resumes afterwards",
+    "reserved": "Reserved window action",
+    "restore": "Restore default",
+    "restoreWindow": "Restore all window defaults"
   },
   "status": {
     "alwaysOn": "Default",

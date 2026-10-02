@@ -37,6 +37,14 @@ const DEFAULT_CLIPBOARD_GROUP_ICON: &str = "i-lets-icons:folder";
 const MAX_GROUP_NAME_CHARS: usize = 32;
 const MAX_GROUP_ICON_BYTES: usize = 256 * 1024;
 
+/// Convert the current OS clipboard without history/capture side effects; success requests a nonactivating hint.
+#[tauri::command]
+pub async fn convert_current_clipboard_to_plain_text(
+    app: AppHandle,
+) -> Result<crate::clipboard::PlainTextConversionResult> {
+    crate::clipboard::convert_current_clipboard_with_feedback(&app)
+}
+
 /// `read_clipboard` 的返回：入库后的记录 + 是否命中去重（前端据此决定提示/滚动行为）。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

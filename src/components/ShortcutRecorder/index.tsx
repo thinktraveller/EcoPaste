@@ -1,3 +1,4 @@
+import { useUnmount } from "ahooks";
 import { Input, type InputRef } from "antd";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -28,6 +29,7 @@ export interface ShortcutRecorderConflict {
 }
 
 interface ShortcutRecorderProps {
+  scope?: "global" | "window";
   className?: string;
   conflicts?: readonly ShortcutRecorderConflict[];
   disabled?: boolean;
@@ -42,6 +44,7 @@ interface ShortcutRecorderProps {
  */
 const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
   const {
+    scope = "global",
     className,
     conflicts = [],
     disabled = false,
@@ -69,16 +72,14 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
     setDraft(value);
   }, [recording, value]);
 
-  useEffect(() => {
-    return () => {
-      if (!shortcutsSuspendedRef.current && !suspendPromiseRef.current) return;
+  useUnmount(() => {
+    if (!shortcutsSuspendedRef.current && !suspendPromiseRef.current) return;
 
-      void resumeShortcutsAfterUnmount(
-        suspendPromiseRef.current,
-        shortcutsSuspendedRef.current,
-      );
-    };
-  }, []);
+    void resumeShortcutsAfterUnmount(
+      suspendPromiseRef.current,
+      shortcutsSuspendedRef.current,
+    );
+  });
 
   const displayValue = formatRecordedShortcut(draft);
   const showClearIcon = draft !== "" && !recording && !disabled;
@@ -94,9 +95,28 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
    */
   const commit = async (nextValue: string) => {
     if (nextValue === committedValueRef.current) return;
+    try {
+      await onChange?.(nextValue);
+      committedValueRef.current = nextValue;
+      return true;
+    } catch (error) {
+      committedValueRef.current = value;
+      setDraftValue(value);
+      log.error("shortcut commit rejected", error);
+      return false;
+    }
+  };
 
-    committedValueRef.current = nextValue;
-    await onChange?.(nextValue);
+  const isValid = (nextValue: string) => {
+    if (scope === "window") {
+      return (
+        nextValue !== "" &&
+        !["Control", "Shift", "Alt", "Command"].includes(nextValue) &&
+        (nextValue.includes("+") ||
+          /^(Enter|Backspace|Delete|F([1-9]|1[0-2]))$/.test(nextValue))
+      );
+    }
+    return isRecordableShortcut(nextValue);
   };
 
   /**
@@ -217,7 +237,7 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
     if (!recordingRef.current) return;
 
     const draftValue = draftValueRef.current;
-    const nextValue = isRecordableShortcut(draftValue) ? draftValue : value;
+    const nextValue = isValid(draftValue) ? draftValue : value;
     const conflict = findShortcutConflict(nextValue);
     if (conflict) {
       resetConflictedDraft(conflict, nextValue);
@@ -243,6 +263,8 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
     event.preventDefault();
     event.stopPropagation();
 
+    if (event.repeat || event.nativeEvent.isComposing) return;
+
     if (suspendPromiseRef.current) {
       await suspendPromiseRef.current;
     }
@@ -254,6 +276,8 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
     }
 
     if (event.key === "Escape") {
+      setRecordingState(false);
+      setDraftValue(value);
       await resumeShortcuts();
       inputRef.current?.blur();
 
@@ -265,9 +289,9 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
 
     setDraftValue(previewValue);
 
-    const nextValue = buildShortcutFromEvent(event);
+    const nextValue = buildShortcutFromEvent(event, scope === "window");
     if (!nextValue) return;
-    if (!isRecordableShortcut(nextValue)) return;
+    if (!isValid(nextValue)) return;
     const conflict = findShortcutConflict(nextValue);
     if (conflict) {
       resetConflictedDraft(conflict, nextValue);

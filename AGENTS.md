@@ -180,3 +180,52 @@ If you're using Codex or another agent-capable tool, additional project-scoped h
 Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
 
 <!-- TRELLIS:END -->
+
+<!-- --- project-initializer (managed) START --- -->
+# 项目协作规范
+
+## 一、目录约定（强制）
+
+- 所有测试、验证与验收脚本必须放在项目根目录的 `_verify/` 下，且不纳入任何 Git 仓库。
+- 所有项目 agent 文档必须放在 `project-docs/` 下：
+  - `goal.md`：目标文档，由 project-creator-cn 维护。
+  - `project-plan.md`：构建计划书，由 project-planner-cn 维护。
+  - `buildlog.md`：构建/修复日志，由 project-builder-cn / project-bugfix-cn 维护。
+  - `teach.md`：项目讲解笔记，由 project-explainer-cn 维护。
+- 其它项目文档（各类分析、验收报告等）必须放在 `project-docs/docs/` 下。
+- 去敏后的发布文档放在 `project-docs-publish/`，由主仓库追踪；发布时不得包含私有 Git 历史、本机配置、运行日志或验证产物。内部工作文档仍按上述 `project-docs/` 约定维护。
+- 各类参考文件（外部项目源码、示例、素材、原始调研资料等）必须放在项目根目录的 `reference-projects/` 下，且不纳入任何 Git 仓库。
+- 项目源代码与配置放在项目根目录或其业务子目录中，不得写入 `project-docs/`、`_verify/` 或 `reference-projects/`。
+- 现有 Trellis backlog、任务 PRD、任务研究材料、开发规范与会话记录继续按 `.trellis/workflow.md` 归档到 `.trellis/`，作为上述补充文档目录规则的例外；不迁移，也不在 `project-docs/` 重复维护。上述 agent 文档由对应代理按需创建，不预建空文件。
+
+## 二、仓库布局
+
+- **主仓库**（项目根目录）：追踪项目源码、配置、现有 Trellis 管理资料、`.gitignore` 与 `AGENTS.md`；通过 `.gitignore` 排除 `project-docs/`、`_verify/` 与 `reference-projects/`。
+- **project-docs 仓库**（`project-docs/`）：独立 Git 仓库，负责本目录内全部文档（含 `docs/` 子目录）。
+
+## 三、提交约定（强制）
+
+每完成一次任务，必须提交 **2 个 Git 仓库**，分别产生本次任务提交：
+
+1. **主项目仓库提交**：只包含本任务涉及的源码、配置及仓库管理文件，不包含 `project-docs/`、`_verify/` 与 `reference-projects/`。
+2. **project-docs 独立仓库提交**：包含本任务在 `project-docs/` 中产生的全部文档。
+
+```powershell
+# 1) 主仓库
+git status --short
+git add <本任务涉及的文件路径>
+git diff --cached --name-only
+git commit -m "<type>: <描述>"
+
+# 2) project-docs 仓库
+git -C project-docs status --short
+git -C project-docs add <本次涉及的文档路径>
+git -C project-docs diff --cached --name-only
+git -C project-docs commit -m "docs: <描述>"
+```
+
+- 两个仓库均**禁止**使用 `git add .` 或 `git add -A`，必须显式列出路径。
+- 禁止把 `_verify/`、`reference-projects/` 下的文件、`.env`、密钥文件提交到任何仓库。
+- 两个仓库均有任务改动时，未完成两次提交不得宣告完成；若某仓库无可提交内容，应如实说明，不创建空提交。
+- 推送前继续遵守本文件已有的提交与推送分支策略；本地提交不等于推送授权。
+<!-- --- project-initializer (managed) END --- -->

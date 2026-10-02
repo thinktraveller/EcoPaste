@@ -3,6 +3,7 @@ import { type FC, type ReactNode, useRef, useState } from "react";
 import { useKeyboardEvent } from "@/hooks/useKeyboardEvent";
 import { cn } from "@/utils/cn";
 import { isMac, isWinClipboardWindow } from "@/utils/is";
+import { matchesShortcut } from "@/utils/shortcut";
 
 interface KeyHintProps {
   /**
@@ -60,7 +61,7 @@ const KeyHint: FC<KeyHintProps> = (props) => {
     clearBlurResetTimer();
     setActive(true);
 
-    if (event.key.toLowerCase() !== hintKey.toLowerCase()) return;
+    if (event.repeat || !matchesShortcut(event, `CmdOrCtrl+${hintKey}`)) return;
 
     event.preventDefault();
 

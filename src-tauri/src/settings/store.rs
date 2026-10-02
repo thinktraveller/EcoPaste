@@ -7,7 +7,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, MutexGuard, RwLock};
 
 use anyhow::Context;
 use tauri::AppHandle;
@@ -24,6 +24,8 @@ const FILENAME: &str = "settings.json";
 pub struct SettingsStore {
     path: RwLock<PathBuf>,
     current: RwLock<Settings>,
+    operation: Mutex<()>,
+    shortcut_diagnostics: RwLock<Vec<&'static str>>,
 }
 
 impl SettingsStore {
@@ -33,7 +35,7 @@ impl SettingsStore {
 
         let path = dir.join(FILENAME);
 
-        let current = match load_from_disk(&path) {
+        let (current, diagnostics) = match load_from_disk(&path) {
             Some(settings) => settings,
             None => {
                 // 真·首次启动：用系统 locale 推导默认语言并落盘，之后所有读取都走常规分支。
@@ -41,7 +43,7 @@ impl SettingsStore {
                 if let Err(err) = write_atomic(&path, &settings) {
                     log::warn!("persist first-run settings failed: {err}");
                 }
-                settings
+                (settings, Vec::new())
             }
         };
         log::info!("settings store ready at {path:?}");
@@ -49,6 +51,8 @@ impl SettingsStore {
         Ok(Self {
             path: RwLock::new(path),
             current: RwLock::new(current),
+            operation: Mutex::new(()),
+            shortcut_diagnostics: RwLock::new(diagnostics),
         })
     }
 
@@ -56,26 +60,69 @@ impl SettingsStore {
         self.current.read().expect("settings poisoned").clone()
     }
 
+    /// Return session-only disabled binding diagnostics; never persist them as settings.
+    pub fn shortcut_diagnostics(&self) -> Vec<&'static str> {
+        self.shortcut_diagnostics
+            .read()
+            .expect("shortcut diagnostics poisoned")
+            .clone()
+    }
+
+    /// Clear an acknowledged load warning only after its explicit setting write succeeds.
+    pub fn acknowledge_shortcut_patch(&self, patch: &serde_json::Value) {
+        let Some(shortcuts) = patch.get("shortcuts") else {
+            return;
+        };
+        self.shortcut_diagnostics
+            .write()
+            .expect("shortcut diagnostics poisoned")
+            .retain(|action| {
+                if *action == crate::shortcut::ACTION_CONVERT_TO_PLAIN_TEXT {
+                    shortcuts.get("convertToPlainText").is_none()
+                } else {
+                    shortcuts
+                        .get("windowActions")
+                        .and_then(|value| value.get(*action))
+                        .is_none()
+                }
+            });
+    }
+
     /// 恢复默认设置并落盘，返回新的完整快照。
     pub fn reset(&self) -> Result<Settings> {
+        let _operation = self.begin_update();
         let next = default_settings_with_system_locale();
 
         let path = self.path();
         write_atomic(&path, &next)?;
         *self.current.write().expect("settings poisoned") = next.clone();
+        self.shortcut_diagnostics
+            .write()
+            .expect("shortcut diagnostics poisoned")
+            .clear();
         Ok(next)
     }
 
     /// 用 JSON patch 深度合并到当前设置，落盘后返回新快照。
     /// patch 必须是 object；非 object 视为「整个替换」语义不友好，直接报错。
     pub fn update(&self, patch: serde_json::Value) -> Result<Settings> {
+        let _operation = self.begin_update();
+        let next = self.prepare_update(patch.clone())?;
+        let next = self.commit_snapshot(next)?;
+        self.acknowledge_shortcut_patch(&patch);
+        Ok(next)
+    }
+
+    /// Validate a candidate before any native registration or persisted state changes.
+    pub fn prepare_update(&self, patch: serde_json::Value) -> Result<Settings> {
+        super::shortcuts::validate_shortcut_json(&patch, self.snapshot().appearance.language)?;
         if !patch.is_object() {
             return Err(AppError::Other(anyhow::anyhow!(
                 "settings patch must be a JSON object"
             )));
         }
 
-        let mut guard = self.current.write().expect("settings poisoned");
+        let guard = self.current.read().expect("settings poisoned");
 
         let mut merged = serde_json::to_value(&*guard)
             .context("failed to serialize current settings for merge")?;
@@ -86,16 +133,43 @@ impl SettingsStore {
 
         validate_settings(&next)?;
 
-        let path = self.path();
-        write_atomic(&path, &next)?;
-        *guard = next.clone();
+        Ok(next)
+    }
+
+    /// Serialize settings read-modify-write operations, including prepared native registration.
+    pub fn begin_update(&self) -> MutexGuard<'_, ()> {
+        self.operation.lock().expect("settings operation poisoned")
+    }
+
+    /// Commit an already validated snapshot after native side effects are prepared.
+    pub fn commit_snapshot(&self, next: Settings) -> Result<Settings> {
+        validate_settings(&next)?;
+        write_atomic(&self.path(), &next)?;
+        *self.current.write().expect("settings poisoned") = next.clone();
+        self.shortcut_diagnostics
+            .write()
+            .expect("shortcut diagnostics poisoned")
+            .retain(|action| {
+                if *action == crate::shortcut::ACTION_CONVERT_TO_PLAIN_TEXT {
+                    next.shortcuts.convert_to_plain_text.is_empty()
+                } else {
+                    next.shortcuts
+                        .window_actions
+                        .get(*action)
+                        .is_none_or(String::is_empty)
+                }
+            });
         Ok(next)
     }
 
     /// 用完整设置文件替换当前设置；覆盖导入专用。
     pub fn replace_from_file(&self, path: &Path) -> Result<Settings> {
+        let _operation = self.begin_update();
         let content =
             fs::read_to_string(path).with_context(|| format!("failed to read {path:?}"))?;
+        let raw: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|err| AppError::Other(anyhow::anyhow!("invalid settings file: {err}")))?;
+        super::shortcuts::validate_shortcut_json(&raw, self.snapshot().appearance.language)?;
         let next: Settings = serde_json::from_str(&content)
             .map_err(|err| AppError::Other(anyhow::anyhow!("invalid settings file: {err}")))?;
 
@@ -104,25 +178,34 @@ impl SettingsStore {
         let path = self.path();
         write_atomic(&path, &next)?;
         *self.current.write().expect("settings poisoned") = next.clone();
+        self.shortcut_diagnostics
+            .write()
+            .expect("shortcut diagnostics poisoned")
+            .clear();
         Ok(next)
     }
 
     /// 数据目录热切换后重新绑定设置文件，并把新路径里的设置加载进内存。
     pub fn rebase(&self, app: &AppHandle) -> Result<Settings> {
+        let _operation = self.begin_update();
         let dir = crate::core::paths::config_dir(app)?;
         fs::create_dir_all(&dir).with_context(|| format!("failed to create dir at {dir:?}"))?;
         let path = dir.join(FILENAME);
-        let current = match load_from_disk(&path) {
+        let (current, diagnostics) = match load_from_disk(&path) {
             Some(settings) => settings,
             None => {
                 let settings = default_settings_with_system_locale();
                 write_atomic(&path, &settings)?;
-                settings
+                (settings, Vec::new())
             }
         };
 
         *self.path.write().expect("settings path poisoned") = path;
         *self.current.write().expect("settings poisoned") = current.clone();
+        *self
+            .shortcut_diagnostics
+            .write()
+            .expect("shortcut diagnostics poisoned") = diagnostics;
         Ok(current)
     }
 
@@ -147,19 +230,29 @@ fn default_settings_with_system_locale() -> Settings {
 /// 返回 `None` 表示主文件不存在（首次启动），调用方据此走「初始化默认」分支；
 /// 读取过程中遇到 IO/解析错误会打 warn，并返回 `Settings::default()` 包装在 `Some` 里——
 /// 这条路径表示「文件存在但坏了」，不要当成首次启动覆盖系统 locale。
-fn load_from_disk(path: &Path) -> Option<Settings> {
+fn load_from_disk(path: &Path) -> Option<(Settings, Vec<&'static str>)> {
     if !path.exists() {
         return None;
     }
 
     match fs::read_to_string(path).and_then(|content| {
-        serde_json::from_str::<Settings>(&content)
+        let raw: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        serde_json::from_value::<Settings>(raw.clone())
+            .map(|settings| (settings, super::shortcuts::malformed_loaded_shortcuts(&raw)))
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
     }) {
-        Ok(settings) => Some(settings),
+        Ok((mut settings, mut diagnostics)) => {
+            diagnostics.extend(super::shortcuts::sanitize_loaded_shortcuts(
+                &mut settings.shortcuts,
+            ));
+            diagnostics.sort_unstable();
+            diagnostics.dedup();
+            Some((settings, diagnostics))
+        }
         Err(err) => {
             log::warn!("settings file {path:?} unreadable, using defaults: {err}");
-            Some(Settings::default())
+            Some((Settings::default(), Vec::new()))
         }
     }
 }
@@ -185,20 +278,7 @@ fn write_atomic(path: &Path, settings: &Settings) -> Result<()> {
 fn validate_settings(settings: &Settings) -> Result<()> {
     validate_window_open_group(&settings.clipboard.window.select_group_on_open)?;
 
-    let open_clipboard = normalize_shortcut_value(&settings.shortcuts.open_clipboard);
-    let open_preference = normalize_shortcut_value(&settings.shortcuts.open_preference);
-
-    if open_clipboard.is_empty() || open_preference.is_empty() {
-        return Ok(());
-    }
-
-    if open_clipboard == open_preference {
-        return Err(AppError::Other(anyhow::anyhow!(
-            "global shortcuts must be unique"
-        )));
-    }
-
-    Ok(())
+    super::shortcuts::validate_shortcuts(&settings.shortcuts, settings.appearance.language)
 }
 
 /// 校验打开剪贴板窗口时选中分组的字符串编码，避免非法设置值落盘。
@@ -222,17 +302,7 @@ fn validate_window_open_group(value: &str) -> Result<()> {
     Ok(())
 }
 
-/// 归一化快捷键字面量，供跨字段校验忽略大小写和多余空白。
-fn normalize_shortcut_value(value: &str) -> String {
-    value
-        .split('+')
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .map(str::to_ascii_lowercase)
-        .collect::<Vec<_>>()
-        .join("+")
-}
-
+/// 深合并对象，数组和叶节点按整体替换。
 fn deep_merge(base: &mut serde_json::Value, patch: serde_json::Value) {
     match (base, patch) {
         (serde_json::Value::Object(base_map), serde_json::Value::Object(patch_map)) => {

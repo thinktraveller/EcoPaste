@@ -12,6 +12,12 @@ pub async fn get_settings(app: AppHandle) -> Result<Settings> {
     Ok(app.state::<SettingsStore>().snapshot())
 }
 
+/// Query actual OS registration outcomes even when startup events preceded WebView creation.
+#[tauri::command]
+pub async fn get_shortcut_status(app: AppHandle) -> Result<Vec<shortcut::ShortcutStatus>> {
+    Ok(shortcut::status(&app))
+}
+
 /// 暂停当前全局快捷键注册；用于前端录入快捷键期间避免旧绑定被触发。
 #[tauri::command]
 pub async fn suspend_global_shortcuts(app: AppHandle) -> Result<()> {
@@ -51,13 +57,11 @@ pub async fn update_settings(app: AppHandle, patch: serde_json::Value) -> Result
         })
         .unwrap_or(false);
 
-    let next = app.state::<SettingsStore>().update(patch)?;
-
-    if touches_shortcuts {
-        if let Err(err) = shortcut::apply(&app, &next.shortcuts) {
-            log::warn!("re-apply shortcuts after settings update failed: {err}");
-        }
-    }
+    let next = if touches_shortcuts {
+        shortcut::update_settings(&app, patch)?
+    } else {
+        app.state::<SettingsStore>().update(patch)?
+    };
 
     if touches_tray {
         if let Err(err) = tray::apply(&app, &next) {

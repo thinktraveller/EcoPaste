@@ -6,7 +6,9 @@ mod file_icon_store;
 mod guard;
 mod icon;
 mod ingest;
+mod markup;
 mod payload;
+mod plain_text;
 mod read;
 mod secrets;
 mod sound;
@@ -27,12 +29,26 @@ pub use icon::{get_icon_cache_key, icon_png, DIR_CACHE_KEY};
 pub use ingest::build_item;
 pub use ingest::build_item_with_settings;
 pub use payload::{ClipboardPayload, ImagePayload, TextPayload};
+pub use plain_text::{convert_current_clipboard_to_plain_text, PlainTextConversionResult};
 pub use read::ClipboardReader;
 pub use sound::play_copy_sound;
 pub use source::detect_frontmost;
 pub use storage::ImageStore;
 pub use watcher::{init, materialize_source, persist_and_notify, WatcherPause};
 pub use write::write_to_clipboard;
+
+/// command和全局快捷键共用成功事实，反馈失败不会改变已完成的转换结果。
+pub fn convert_current_clipboard_with_feedback(
+    app: &tauri::AppHandle,
+) -> crate::core::Result<PlainTextConversionResult> {
+    use tauri::Manager;
+    let guard = app.state::<std::sync::Arc<WritebackGuard>>();
+    let result = convert_current_clipboard_to_plain_text(guard.inner().as_ref())?;
+    if result == PlainTextConversionResult::Converted {
+        crate::window::feedback::request_conversion_success(app);
+    }
+    Ok(result)
+}
 
 #[cfg(test)]
 pub(crate) mod test_lock {

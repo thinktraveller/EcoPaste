@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# --- project-initializer (managed) ---
+_verify/
+reference-projects/
+project-docs/
+# --- /project-initializer (managed) ---

@@ -64,9 +64,11 @@ const SETTING_ICON_MAP: Record<string, string> = {
   "search.sort": "i-lucide:arrow-down-up",
   "sensitive.collectSecrets": "i-lucide:key-round",
   "sensitive.redactSecrets": "i-lucide:scan-eye",
+  "shortcuts.convertToPlainText": "i-lucide:clipboard-type",
   "shortcuts.openClipboard": "i-lucide:clipboard",
   "shortcuts.openPreference": "i-lucide:settings",
   "shortcuts.winV": "i-lucide:clipboard-list",
+
   "source.excludedApps": "i-lucide:shield-ban",
   "updates.autoCheck": "i-lucide:refresh-cw",
   "updates.beta": "i-lucide:flask-conical",
@@ -79,6 +81,15 @@ const SETTING_ICON_MAP: Record<string, string> = {
   "window.selectCategoryOnOpen": "i-lucide:shapes",
   "window.selectGroupOnOpen": "i-lucide:folder-tree",
   "window.selectRangeOnOpen": "i-lucide:list-filter",
+  "windowShortcuts.copy": "i-lucide:keyboard",
+  "windowShortcuts.delete": "i-lucide:keyboard",
+  "windowShortcuts.deleteForward": "i-lucide:keyboard",
+  "windowShortcuts.favorite": "i-lucide:keyboard",
+  "windowShortcuts.note": "i-lucide:keyboard",
+  "windowShortcuts.open": "i-lucide:keyboard",
+  "windowShortcuts.paste": "i-lucide:keyboard",
+  "windowShortcuts.pastePlain": "i-lucide:keyboard",
+  "windowShortcuts.pin": "i-lucide:keyboard",
 };
 
 /**

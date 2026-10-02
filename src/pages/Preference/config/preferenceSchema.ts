@@ -1,6 +1,7 @@
 import { CAPTURE_KIND_OPTIONS } from "@/constants/captureKinds";
 import { ITEM_ACTION_OPTIONS } from "@/constants/itemActions";
 import { LANGUAGE_OPTIONS } from "@/constants/languages";
+import { WINDOW_ACTION_DEFAULTS } from "@/constants/shortcuts";
 import {
   WINDOW_OPEN_CATEGORY_OPTIONS,
   WINDOW_OPEN_RANGE_OPTIONS,
@@ -741,6 +742,15 @@ export const preferenceTabs: PreferenceTab[] = [
               return settings.shortcuts.openPreference;
             },
           },
+          {
+            control: { type: "shortcutRecorder" },
+            id: "shortcuts.convertToPlainText",
+            keywords: ["plain", "format", "clipboard", "Ctrl Shift V"],
+            path: ["shortcuts", "convertToPlainText"],
+            value: (settings) => {
+              return settings.shortcuts.convertToPlainText;
+            },
+          },
           ...(isWin
             ? [
                 {
@@ -761,6 +771,20 @@ export const preferenceTabs: PreferenceTab[] = [
               ]
             : []),
         ],
+      },
+      {
+        id: "windowShortcuts",
+        settings: Object.keys(WINDOW_ACTION_DEFAULTS).map((action) => {
+          return {
+            control: { type: "shortcutRecorder" } as const,
+            id: `windowShortcuts.${action}`,
+            keywords: ["shortcut", "window", action],
+            path: ["shortcuts", "windowActions", action],
+            value: (settings: Settings) => {
+              return settings.shortcuts.windowActions[action] ?? "";
+            },
+          };
+        }),
       },
     ],
   },

@@ -137,6 +137,10 @@
       },
       "window": {
         "title": "剪贴板窗口"
+      },
+      "windowShortcuts": {
+        "description": "常用列表动作可以改绑；导航、预览与数字快速粘贴保持默认。",
+        "title": "剪贴板窗口快捷键"
       }
     },
     "settings": {
@@ -527,6 +531,11 @@
         }
       },
       "shortcuts": {
+        "convertToPlainText": {
+          "description": "将当前剪贴板的 Markdown、HTML 或富文本转为纯文本，保留正文和代码，不自动粘贴。图片、文件及只有 RTF 的内容保持不变。",
+          "placeholder": "点击录制全局快捷键",
+          "title": "转换当前剪贴板为纯文本"
+        },
         "openClipboard": {
           "description": "打开或隐藏剪贴板窗口。",
           "placeholder": "Alt+C",
@@ -632,6 +641,53 @@
           },
           "title": "打开时选中范围"
         }
+      },
+      "windowShortcuts": {
+        "copy": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "复制选中记录"
+        },
+        "delete": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "删除选中记录"
+        },
+        "deleteForward": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "删除选中记录（另一入口）"
+        },
+        "favorite": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "收藏选中记录"
+        },
+        "note": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "编辑备注"
+        },
+        "open": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "打开选中记录"
+        },
+        "paste": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "粘贴选中记录"
+        },
+        "pastePlain": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "纯文本粘贴选中记录"
+        },
+        "pin": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "置顶选中记录"
+        }
       }
     },
     "tabs": {
@@ -661,6 +717,14 @@
   "search": {
     "empty": "没有找到相关设置",
     "placeholder": "搜索配置项"
+  },
+  "shortcutSettings": {
+    "active": "已在系统注册",
+    "failed": "未生效：{{reason}}",
+    "paused": "录入期间暂停，结束后恢复注册",
+    "reserved": "保留窗口动作",
+    "restore": "恢复默认",
+    "restoreWindow": "恢复所有窗口动作默认键"
   },
   "status": {
     "alwaysOn": "默认能力",

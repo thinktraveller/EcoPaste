@@ -35,6 +35,7 @@ import type {
 } from "@/types/clipboard";
 import { cn } from "@/utils/cn";
 import { getModalApi } from "@/utils/feedback";
+import { matchesShortcut } from "@/utils/shortcut";
 
 type GroupModalMode = "create" | "edit";
 type MoreMenuAction = "manageGroups" | "newGroup";
@@ -259,9 +260,7 @@ const Group: FC = () => {
    * 处理分组栏快捷键：Cmd/Ctrl+Q 切换范围，左右键切分类，Tab / Shift+Tab 仅在可见自定义分组间循环。
    */
   const handleKeyDown = (event: KeyboardEvent) => {
-    const eventModifierPressed = event.metaKey || event.ctrlKey;
-
-    if (eventModifierPressed && event.key.toLowerCase() === "q") {
+    if (!event.repeat && matchesShortcut(event, "CmdOrCtrl+Q")) {
       event.preventDefault();
       toggleRange();
 
@@ -269,7 +268,8 @@ const Group: FC = () => {
     }
 
     if (
-      (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+      (matchesShortcut(event, "ArrowLeft") ||
+        matchesShortcut(event, "ArrowRight")) &&
       !shouldUseNativeHorizontalNavigation(event)
     ) {
       event.preventDefault();
@@ -278,7 +278,8 @@ const Group: FC = () => {
       return;
     }
 
-    if (event.key !== "Tab") return;
+    if (!matchesShortcut(event, "Tab") && !matchesShortcut(event, "Shift+Tab"))
+      return;
 
     event.preventDefault();
 

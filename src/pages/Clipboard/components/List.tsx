@@ -54,6 +54,8 @@ import type {
 import type { ItemAction } from "@/types/settings";
 import { cn } from "@/utils/cn";
 import { isMac } from "@/utils/is";
+import { matchesShortcut } from "@/utils/shortcut";
+import { matchesWindowShortcut } from "@/utils/windowShortcut";
 import type { WindowVisibilityPayload } from "../hooks/previewController";
 import {
   isSpaceKey,
@@ -589,7 +591,7 @@ const List: FC = () => {
 
     setIsModifierPressed(eventModifierPressed);
 
-    if (event.key === "Escape") {
+    if (matchesShortcut(event, "Escape")) {
       event.preventDefault();
       closeTopEscapeLayer();
 
@@ -598,7 +600,10 @@ const List: FC = () => {
 
     if (total === 0) return;
 
-    if (event.key === "Enter") {
+    if (
+      matchesWindowShortcut(event, "paste") ||
+      matchesWindowShortcut(event, "pastePlain")
+    ) {
       event.preventDefault();
 
       const activeItem = getActiveItem();
@@ -606,7 +611,10 @@ const List: FC = () => {
       if (!activeItem) return;
 
       closePreview("enterPaste");
-      pasteClipboardItem(activeItem.id, eventModifierPressed);
+      pasteClipboardItem(
+        activeItem.id,
+        matchesWindowShortcut(event, "pastePlain"),
+      );
 
       return;
     }
@@ -617,8 +625,8 @@ const List: FC = () => {
     }
 
     if (
-      eventModifierPressed &&
-      (event.key === "Backspace" || event.key === "Delete")
+      matchesWindowShortcut(event, "delete") ||
+      matchesWindowShortcut(event, "deleteForward")
     ) {
       event.preventDefault();
 
@@ -631,11 +639,7 @@ const List: FC = () => {
       return;
     }
 
-    if (
-      eventModifierPressed &&
-      event.key.toLowerCase() === "c" &&
-      !shouldUseNativeCopy(event)
-    ) {
+    if (matchesWindowShortcut(event, "copy") && !shouldUseNativeCopy(event)) {
       event.preventDefault();
 
       const activeItem = getActiveItem();
@@ -650,7 +654,7 @@ const List: FC = () => {
       return;
     }
 
-    if (eventModifierPressed && event.key.toLowerCase() === "o") {
+    if (matchesWindowShortcut(event, "open")) {
       const activeItem = getActiveItem();
 
       if (!activeItem) return;
@@ -665,7 +669,7 @@ const List: FC = () => {
       return;
     }
 
-    if (eventModifierPressed && event.key.toLowerCase() === "d") {
+    if (matchesWindowShortcut(event, "favorite")) {
       event.preventDefault();
 
       const activeItem = getActiveItem();
@@ -677,7 +681,7 @@ const List: FC = () => {
       return;
     }
 
-    if (eventModifierPressed && event.key.toLowerCase() === "t") {
+    if (matchesWindowShortcut(event, "pin")) {
       event.preventDefault();
 
       const activeItem = getActiveItem();
@@ -689,7 +693,7 @@ const List: FC = () => {
       return;
     }
 
-    if (eventModifierPressed && event.key.toLowerCase() === "m") {
+    if (matchesWindowShortcut(event, "note")) {
       event.preventDefault();
 
       const activeItem = getActiveItem();
@@ -701,7 +705,11 @@ const List: FC = () => {
       return;
     }
 
-    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    if (
+      !matchesShortcut(event, "ArrowUp") &&
+      !matchesShortcut(event, "ArrowDown")
+    )
+      return;
 
     event.preventDefault();
 

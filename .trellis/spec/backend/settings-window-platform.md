@@ -95,6 +95,82 @@ Rust is the source of truth. `commands::settings::update_settings` and
 `reset_settings` emit `settings://updated` after persistence and side effects.
 `src/stores/settings.ts` listens to that event and updates the Valtio mirror.
 
+## Scenario: Configurable Clipboard Shortcuts
+
+### 1. Scope / Trigger
+
+Window action rebinding spans persisted settings, React keyboard events, Windows
+non-focusable navigation hooks, native menus, and global shortcut registration.
+
+### 2. Signatures
+
+- `Shortcuts.convert_to_plain_text: String` -> `convertToPlainText`.
+- `Shortcuts.window_actions: BTreeMap<String, String>` -> `windowActions`.
+- `get_shortcut_status` returns `{ action, binding, active, error }[]`.
+- Events: `shortcut://status`, `shortcut://conflict`; Rust constants mirrored in TS.
+- Native action IDs: `open_clipboard`, `open_preference`, `convert_to_plain_text`.
+
+### 3. Contracts
+
+Default conversion is Control+Shift+V on both platforms. Missing new fields and
+missing known action IDs receive defaults; explicit empty strings remain disabled.
+Known window IDs: paste, pastePlain, copy, open, favorite, pin, note, delete,
+deleteForward. The two deletion entries retain the original Backspace/Delete
+paths. Unknown string-valued IDs survive serialization but never execute.
+
+Window bare keys are Enter/Backspace/Delete and F1—F12. Navigation, Space, Esc,
+Tab, digit shortcuts, and fixed helper actions retain dedicated handlers.
+Aliases/modifier order normalize; all four modifiers must match exactly.
+An isolated modifier is never a shortcut primary key.
+Shifted digits/punctuation resolve the same base key as the recorder and Windows
+hook; `Control+Shift+1` must match the event whose key is `!` and code is `Digit1`.
+
+Settings updates serialize read/prepare/commit. Native registration has its own
+gate; shortcut updates hold both through registration, persistence, and rollback.
+Delayed resume reads the latest snapshot inside the native gate. Window-only
+updates do not re-register unrelated globals. Recording tests new global
+registrations while callbacks remain suspended, then unregisters them until resume.
+
+Import and storage rebase re-apply registrations and emit actual status; failed
+registrations retain imported/rebased intent with a visible inactive outcome.
+Reset/import/rebase must not equate settings persistence with OS registration.
+
+### 4. Validation & Error Matrix
+
+- Semantic duplicates across global/window actions or Win+V -> reject writes.
+- Fixed gesture shadowing, unsupported primary key, bare letter -> reject writes.
+- Malformed new field types -> reject update/import; tolerant disk load disables
+  damaged new bindings without replacing unrelated settings.
+- Invalid loaded new bindings -> disable and retain session-only action diagnostics
+  in SettingsStore. `get_shortcut_status` merges a localized error for the native
+  converter ID or known window ID, even when its value is empty. Successful explicit
+  edits (including intentional disable), restore, or replacement clear acknowledged
+  warnings; rebase replaces them with diagnostics for its loaded file. Legacy
+  globals remain intact for native registration diagnostics.
+- Native prepare/write failure -> retain prior settings and attempt native restore;
+  restore failure remains visible in actual status.
+
+### 5. Good/Base/Bad Cases
+
+- Good: copy bound to Control+Shift+Y executes only that exact combination.
+- Base: missing fields keep existing Enter/CmdOrCtrl+C behaviors.
+- Bad: Control alone must not match Control+F because it appears among modifiers.
+
+### 6. Tests Required
+
+Old custom globals/winV/unrelated fields, explicit disables, partial maps,
+unknown IDs, malformed new types, aliases/order, exact modifiers, reserved
+actions, and Win+V collisions need assertions. UI checks cover recording,
+cancel/blur/unmount, restore, failure rollback, and hint/menu agreement.
+Empty disabled converter/window rows display load warnings; successful correction
+clears only acknowledged diagnostics. No diagnostic field is persisted to settings.
+Native Windows hooks and macOS menus still require real desktop verification.
+
+### 7. Wrong vs Correct
+
+Wrong: `parts.includes(event.key)` or `ctrlKey && key === 'c'` for full matching.
+Correct: compare the unique non-modifier primary key and all modifier booleans.
+
 Do not mutate `settingsState` directly from UI components. Even the initiating
 window waits for the broadcast so all windows share the same snapshot.
 
@@ -141,7 +217,7 @@ and preview payloads. Treat it as a cross-layer contract change.
   - TypeScript `WINDOW_LABEL.CLIPBOARD = "clipboard"`
   - Tauri config window label `"clipboard"`
 - Commands:
-  - `set_clipboard_window_pinned(pinned: bool) -> ()`
+  - `set_clipboard_window_pinned(AppHandle, pinned: bool) -> ClipboardWindowPinState`
   - `set_clipboard_window_auto_hide_suspended(suspended: bool) -> ()`
 - Preview payload:
   - `ClipboardPreviewState.clipboardWindow: PreviewClipboardWindowRect | null`
@@ -274,10 +350,12 @@ Tauri command registration, and the React keyboard abstraction.
   targets keep native browser keyboard behavior while editing is active.
 - In the Windows clipboard window only, editable controls with
   `data-allow-global-keyboard="true"` are handoff inputs: when they receive
-  navigation/function keys such as Ctrl, Arrow keys, Enter, Escape, or Tab,
+  navigation/function keys such as Arrow keys, Enter, Escape, or Tab,
   `useKeyboardEvent` must blur the control before running the global keyboard
   handler so clipboard shortcuts keep working. macOS keeps its existing browser
   keyboard bubbling path.
+- Modifier-only keydown/keyup updates hint state without blurring an editable
+  control; subsequent character/copy shortcuts retain native editing behavior.
 - Shortcut hint components must not clear their active state on the Windows
   clipboard window blur caused by Ctrl handoff while the modifier key is still
   pressed; they should remain active until the matching modifier keyup arrives.
@@ -302,8 +380,8 @@ Tauri command registration, and the React keyboard abstraction.
   non-focusable and returns focus to the prior app.
 - Good: user focuses search, presses ArrowDown, and the search input blurs
   before the list selection shortcut runs.
-- Good: user focuses search, holds Ctrl, the search input blurs, and shortcut
-  hints stay visible until Ctrl is released.
+- Good: user focuses search and holds Ctrl; search remains focused and shortcut
+  hints update until Ctrl is released. Copy/text edits remain native.
 - Good: user presses Ctrl+F while the Windows clipboard window is non-focusable,
   the window enters editing mode first, and the search input receives focus.
 - Base: no editable control is focused; Windows navigation continues through
@@ -762,3 +840,88 @@ app.state::<UpdateState>().install_downloaded(&version)?;
 app.request_restart();
 Ok(())
 ```
+
+## Scenario: Pinned Clipboard Window and Conversion Success Hint
+
+### 1. Scope / Trigger
+
+Window pin is a session fact, distinct from row pinning and temporary file-dialog
+auto-hide suspension. Global conversion feedback must work with a hidden clipboard
+window and preserve the external application's foreground/input target.
+
+### 2. Signatures
+
+- `get_clipboard_window_pin_state() -> { pinned: bool, revision: u64 }`.
+- `set_clipboard_window_pinned(AppHandle, pinned: bool)` returns the same state.
+- `window://pinned` mirrors the state; Header rejects lower revisions.
+- `convert_current_clipboard_with_feedback(&AppHandle)` shares command/global
+  success handling; low-level `convert_current_clipboard_to_plain_text` stays UI-free.
+- `get_conversion_feedback_state() -> Option<{ requestId: u64, message: String }>`.
+- `present_conversion_feedback(AppHandle, request_id: u64)` accepts rendered IDs.
+- `clipboard://conversion-feedback` targets window label `conversion-feedback`.
+
+### 3. Contracts
+
+The existing topmost levels remain active. Pin keeps the clipboard window expanded
+on loss of focus and copy/paste; explicit Esc/toggle/close still hides it without
+clearing pin. Clicking pin again cancels; restart resets false. No settings field
+or migration is introduced. UI pulls facts on mount/visibility and listens to state
+events; revision prevents late query/save responses reverting newer state. Pending
+save and shortcuts cannot double-toggle; errors retain the last confirmed state.
+
+Windows pinned navigation pauses on outside clicks/foreground changes. Already
+consumed keys retain their release pairing; clicking inside or explicitly reopening
+resumes interaction. Editing disables the hook, restores the external foreground
+before re-enabling navigation, and preserves pause if focus was handed to another
+app. The temporary file-dialog suspension is independent of pin.
+
+Only `Converted` requests the exact zh-CN `已经转换格式` / en-US `Formatting converted`
+message. A single lazy-created transparent, mouse-transparent window is reused.
+Windows uses `SWP_NOACTIVATE`, macOS a non-key NSPanel at Status level. Rust positions
+it near the bottom of the cursor's monitor work area and hides after one second
+from actual show. New successes replace the one message; no stack of toasts.
+
+Windows native `SetWindowPos(SWP_SHOWWINDOW)` bypasses Tao's cached visibility;
+hide through native `ShowWindow(SW_HIDE)` on the main thread as well. Calling
+Tauri `hide()` with the cached flag still false can be a no-op. `ShowWindow`'s
+return value describes previous visibility, not success; do not treat false as
+a hide failure. macOS continues pairing panel show/hide.
+
+The frontend's post-commit effect acknowledges the rendered ID; do not use rAF in a
+hidden WebView because Chromium can suspend it. Pull fallback covers a cold window
+missing the initial event. Pending IDs and displayed IDs are separate: a new request
+that never renders must not cancel the old displayed window's hide timer. Only an
+actual successful show updates DISPLAYED_ID. Old/duplicate acks are no-ops; requests
+older than ten seconds are not shown. Feedback errors are logged separately and
+never cause conversion retry or reinterpret a successful native write as failed.
+
+### 4. Validation & Error Matrix
+
+- Failed pin command -> wrapper toast, retained confirmed state.
+- Late lower revision -> ignored.
+- Unchanged/Unsupported/Changed/Busy/Err -> no success hint.
+- Missing feedback window/build/show failure -> log; successful clipboard remains.
+- New pending request without render -> old displayed hint still expires.
+- Old displayed timer after newer successful show -> no hide of the new hint.
+
+### 5. Good/Base/Bad Cases
+
+Good: hidden clipboard + external editor + Ctrl+Shift+V converts markup and displays
+one small hint without focus movement. Base: ordinary Text-only produces no hint.
+Bad: antd message in the hidden clipboard window, native success dialog, or letting
+pinned navigation consume an outside application's arrow/delete/copy keys.
+
+### 6. Tests Required
+
+UI covers initialization/remount/revision/save failure/double trigger and feedback
+pull/events/old IDs/one ack per ID. Native Windows tests cover outside click and
+app switching, search-to-list focus restore, actual clipboard formats, cold/warm
+hint show/expiry and unchanged/unsupported feedback. Repeat on macOS; absent device
+is pending, never inferred from a platform flag or Windows pass.
+
+### 7. Wrong vs Correct
+
+Wrong: replace pending request ID and use it to decide whether an already displayed
+hint may hide; a failed new render can keep the old window visible forever.
+Correct: timeouts compare the last successfully displayed ID; pending requests do
+not update that ID. No persistence is added for a session-only pin policy.

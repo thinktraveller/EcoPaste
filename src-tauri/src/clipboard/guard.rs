@@ -21,9 +21,14 @@ pub struct WritebackGuard {
 }
 
 struct Pending {
+    id: uuid::Uuid,
     content_hash: String,
     at: Instant,
+    generation: Option<u64>,
 }
+
+/// 只撤销一次写回登记，不影响同时写入相同内容的其它操作。
+pub(crate) struct SuppressionToken(uuid::Uuid);
 
 impl Default for WritebackGuard {
     fn default() -> Self {
@@ -40,19 +45,54 @@ impl WritebackGuard {
 
     /// 写回剪贴板前登记将写入内容的 `content_hash`。
     pub fn suppress(&self, content_hash: String) {
+        self.suppress_tracked(content_hash);
+    }
+
+    /// 返回本次登记的句柄，供写入失败或写前取消时精确撤销。
+    pub(crate) fn suppress_tracked(&self, content_hash: String) -> SuppressionToken {
         let mut pending = self.pending.lock().expect("writeback guard poisoned");
         pending.retain(|p| p.at.elapsed() <= SUPPRESS_TTL);
+        let id = uuid::Uuid::new_v4();
         pending.push(Pending {
+            id,
             content_hash,
             at: Instant::now(),
+            generation: None,
         });
+
+        SuppressionToken(id)
+    }
+
+    /// 已被监听消费的登记不再存在；撤销仍然是安全的空操作。
+    pub(crate) fn cancel(&self, token: SuppressionToken) {
+        let mut pending = self.pending.lock().expect("writeback guard poisoned");
+        pending.retain(|p| p.id != token.0 && p.at.elapsed() <= SUPPRESS_TTL);
+    }
+
+    /// 成功写入后绑定系统代次；监听暂停或过滤时，下一次同内容真实复制不会命中旧登记。
+    pub(crate) fn mark_written(&self, token: &SuppressionToken, generation: u64) {
+        let mut pending = self.pending.lock().expect("writeback guard poisoned");
+        if let Some(entry) = pending.iter_mut().find(|p| p.id == token.0) {
+            entry.generation = Some(generation);
+        }
     }
 
     /// 监听回调判断本次变更是否为自身写回所致：命中登记指纹（且未过期）则返回 `true`
     /// 并消费掉登记；否则返回 `false`。过期的登记顺带清理。
     pub fn should_skip(&self, content_hash: &str) -> bool {
         let mut pending = self.pending.lock().expect("writeback guard poisoned");
-        pending.retain(|p| p.at.elapsed() <= SUPPRESS_TTL);
+        let generation = if pending.iter().any(|entry| entry.generation.is_some()) {
+            super::plain_text::clipboard_generation()
+        } else {
+            0
+        };
+        pending.retain(|p| {
+            p.at.elapsed() <= SUPPRESS_TTL
+                && match p.generation {
+                    Some(written_generation) => written_generation == generation,
+                    None => true,
+                }
+        });
 
         let Some(index) = pending.iter().position(|p| p.content_hash == content_hash) else {
             return false;
@@ -67,8 +107,10 @@ impl WritebackGuard {
     fn suppress_expired_for_test(&self, content_hash: String) {
         let mut pending = self.pending.lock().expect("writeback guard poisoned");
         pending.push(Pending {
+            id: uuid::Uuid::new_v4(),
             content_hash,
             at: Instant::now() - SUPPRESS_TTL - Duration::from_millis(1),
+            generation: None,
         });
     }
 

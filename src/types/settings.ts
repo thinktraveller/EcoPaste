@@ -85,6 +85,8 @@ export interface Shortcuts {
   openClipboard: string;
   openPreference: string;
   winV: boolean;
+  convertToPlainText: string;
+  windowActions: Record<string, string>;
 }
 
 export interface Content {

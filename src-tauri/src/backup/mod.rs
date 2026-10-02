@@ -973,6 +973,9 @@ async fn merge_import(
     let next = app
         .state::<crate::settings::SettingsStore>()
         .update(patch)?;
+    if let Err(err) = crate::shortcut::apply(app, &next.shortcuts) {
+        log::warn!("shortcut registration after merged settings import incomplete: {err}");
+    }
     emit_settings_updated(app, &next);
 
     Ok(ImportHistoryBackupResult {
@@ -1017,6 +1020,9 @@ async fn overwrite_import(
     let next = app
         .state::<crate::settings::SettingsStore>()
         .replace_from_file(&settings_path)?;
+    if let Err(err) = crate::shortcut::apply(app, &next.shortcuts) {
+        log::warn!("shortcut registration after replaced settings import incomplete: {err}");
+    }
     emit_settings_updated(app, &next);
 
     Ok(ImportHistoryBackupResult {

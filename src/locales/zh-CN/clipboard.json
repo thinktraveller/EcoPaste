@@ -55,9 +55,9 @@
     "logoAlt": "EcoPaste 标志",
     "moreActions": "更多操作",
     "openPreference": "偏好设置",
-    "pin": "固定窗口",
+    "pin": "置顶窗口（失焦保持展开）",
     "searchPlaceholder": "搜索剪贴板...",
-    "unpin": "取消固定"
+    "unpin": "取消窗口置顶"
   },
   "note": {
     "placeholder": "为这条记录添加备注...",
@@ -85,6 +85,7 @@
     "copySelected": "复制选中项",
     "createGroup": "新增分组",
     "deleteSelected": "删除选中项",
+    "deleteSelectedAlternate": "删除选中记录（另一入口）",
     "favoriteSelected": "收藏 / 取消收藏",
     "focusSearch": "聚焦搜索框",
     "navigate": "上下导航",

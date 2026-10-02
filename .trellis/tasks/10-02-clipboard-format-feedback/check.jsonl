@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/settings-window-platform.md","reason":"窗口固定和无焦点反馈"}
+{"file":".trellis/spec/backend/clipboard-pipeline.md","reason":"转换与Guard保护"}
+{"file":".trellis/spec/backend/commands-and-events.md","reason":"IPC跨端契约"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"固定按钮和反馈展示"}

@@ -88,11 +88,14 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             false
         };
 
-        if !menu_handled
-            && window::should_auto_hide_clipboard_window()
-            && cursor_outside_clipboard_window(app, cursor)
-        {
-            schedule_hide(app);
+        if !menu_handled {
+            let outside = cursor_outside_clipboard_window(app, cursor);
+            if window::is_clipboard_window_pinned() {
+                crate::keyboard::set_pinned_navigation_interaction(!outside);
+            }
+            if window::should_auto_hide_clipboard_window() && outside {
+                schedule_hide(app);
+            }
         }
     }
 

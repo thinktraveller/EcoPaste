@@ -126,6 +126,10 @@ pub struct Shortcuts {
     pub open_preference: String,
     /// 仅 Windows：用 Win+V 唤起剪贴板窗口，替代系统剪贴板历史面板。默认关闭。
     pub win_v: bool,
+    #[serde(deserialize_with = "super::shortcuts::deserialize_binding")]
+    pub convert_to_plain_text: String,
+    #[serde(deserialize_with = "super::shortcuts::deserialize_window_actions")]
+    pub window_actions: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for Shortcuts {
@@ -134,6 +138,8 @@ impl Default for Shortcuts {
             open_clipboard: "Alt+C".into(),
             open_preference: "Alt+X".into(),
             win_v: false,
+            convert_to_plain_text: "Control+Shift+V".into(),
+            window_actions: super::shortcuts::default_window_actions(),
         }
     }
 }

@@ -3,6 +3,7 @@
 //! 启动顺序：`init` 先建 store 并 manage 进 Tauri State，其它子系统（如全局快捷键）按需读取初始值。
 
 mod model;
+pub mod shortcuts;
 mod store;
 
 pub use model::*;

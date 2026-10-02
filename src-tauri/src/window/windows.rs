@@ -53,15 +53,19 @@ pub fn set_clipboard_window_editing(app_handle: &AppHandle, editing: bool) -> Re
         .set_focusable(false)
         .map_err(|e| anyhow::anyhow!(e))?;
 
-    if window.is_visible().unwrap_or(false) {
-        keyboard::enable_navigation_keys(app_handle);
-        mouse::enable_outside_click_hide(app_handle);
-    }
-
     if should_restore_foreground {
         restore_pre_edit_foreground(hwnd);
     } else {
         clear_pre_edit_foreground();
+    }
+
+    if window.is_visible().unwrap_or(false) {
+        // 固定态导航记住的是恢复后的粘贴目标，不能采样即将让出的编辑窗口。
+        keyboard::enable_navigation_keys(app_handle);
+        if super::is_clipboard_window_pinned() && !should_restore_foreground {
+            keyboard::set_pinned_navigation_interaction(false);
+        }
+        mouse::enable_outside_click_hide(app_handle);
     }
 
     Ok(())
