@@ -1,11 +1,13 @@
-import { useDebounceFn } from "ahooks";
+import { useDebounceFn, useMount, useUnmount } from "ahooks";
 import type { MenuProps } from "antd";
 import type { ChangeEvent, FC } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import {
+  type ClipboardWindowPinState,
   clearClipboardItems,
+  getClipboardWindowPinState,
   setClipboardWindowPinned,
   showWindow,
 } from "@/commands";
@@ -41,6 +43,10 @@ const Header: FC = () => {
   const { t } = useTranslation("clipboard");
   const settings = useSnapshot(settingsState);
   const [pinned, setPinned] = useState(false);
+  const [pinPending, setPinPending] = useState(true);
+  const pinRevisionRef = useRef(-1);
+  const pinBusyRef = useRef(false);
+  const mountedRef = useRef(true);
   const [searchBlurToken, setSearchBlurToken] = useState(0);
   const [searchClearToken, setSearchClearToken] = useState(0);
   const [searchFocusToken, setSearchFocusToken] = useState(0);
@@ -78,11 +84,52 @@ const Header: FC = () => {
    * 切换剪贴板窗口固定态：Rust 侧立即生效（resign_key / 外部点击钩子读取），本地态仅用于按钮渲染。
    */
   const handleTogglePinned = async () => {
-    const next = !pinned;
+    if (pinPending || pinBusyRef.current) return;
 
-    await setClipboardWindowPinned(next);
-    setPinned(next);
+    pinBusyRef.current = true;
+    setPinPending(true);
+
+    try {
+      applyPinState(await setClipboardWindowPinned(!pinned));
+    } catch {
+      // command 包装已经展示错误；按钮继续显示最后确认的 Rust 状态。
+    } finally {
+      pinBusyRef.current = false;
+      if (mountedRef.current) setPinPending(false);
+    }
   };
+
+  /**
+   * 保留最新版本，避免初始化查询或保存响应迟到时回退按钮状态。
+   */
+  const applyPinState = (state: ClipboardWindowPinState) => {
+    if (!mountedRef.current || state.revision < pinRevisionRef.current) return;
+
+    pinRevisionRef.current = state.revision;
+    setPinned(state.pinned);
+  };
+
+  const refreshPinState = async () => {
+    try {
+      applyPinState(await getClipboardWindowPinState());
+    } catch {
+      return;
+    } finally {
+      if (mountedRef.current && !pinBusyRef.current) setPinPending(false);
+    }
+  };
+
+  useMount(refreshPinState);
+  useUnmount(() => {
+    mountedRef.current = false;
+  });
+
+  useTauriListen<ClipboardWindowPinState>(
+    TAURI_EVENT.WINDOW_PINNED,
+    (event) => {
+      applyPinState(event.payload);
+    },
+  );
 
   /**
    * 防抖写入共享 store：连续打字时仅保留最后一次值，下游 List 直接消费 store 触发查询。
@@ -134,6 +181,7 @@ const Header: FC = () => {
   }) => {
     const { label, visible } = event.payload;
     if (label !== WINDOW_LABEL.CLIPBOARD) return;
+    void refreshPinState();
 
     if (!visible) {
       blurSearch();
@@ -199,6 +247,9 @@ const Header: FC = () => {
 
         <Tooltip title={t(pinned ? "header.unpin" : "header.pin")}>
           <CustomIconButton
+            aria-label={t(pinned ? "header.unpin" : "header.pin")}
+            aria-pressed={pinned}
+            disabled={pinPending}
             icon={
               <KeyHint
                 hintKey="P"

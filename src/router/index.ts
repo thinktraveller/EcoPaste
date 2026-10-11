@@ -1,12 +1,14 @@
 import { createHashRouter } from "react-router";
 import Clipboard from "@/pages/Clipboard";
 import ContextMenu, { ContextSubmenu } from "@/pages/ContextMenu";
+import ConversionFeedback from "@/pages/ConversionFeedback";
 import Onboarding from "@/pages/Onboarding";
 import Preference from "@/pages/Preference";
 import Preview from "@/pages/Preview";
 import Update from "@/pages/Update";
 
 export const router = createHashRouter([
+  { Component: ConversionFeedback, path: "/conversion-feedback" },
   {
     Component: Clipboard,
     path: "/",

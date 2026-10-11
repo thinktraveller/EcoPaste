@@ -85,6 +85,8 @@ export interface Shortcuts {
   openClipboard: string;
   openPreference: string;
   winV: boolean;
+  convertToPlainText: string;
+  windowActions: Record<string, string>;
 }
 
 export interface Content {
@@ -170,6 +172,42 @@ export interface Filters {
   excludedAppIds: string[];
 }
 
+export type ReplacementMode = "literal" | "regex";
+
+export interface CustomReplacementRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  mode: ReplacementMode;
+  pattern: string;
+  replacement: string;
+}
+
+/** Rust `PlainTextConversionSettings`; rule order and real whitespace are preserved. */
+export interface PlainTextConversionSettings {
+  linkStyle: "title" | "titleAndUrl" | "url";
+  imageStyle: "alt" | "omit";
+  listStyle: "textOnly" | "readableMarkers";
+  taskStyle: "status" | "textOnly";
+  tableSeparator: "tab" | "space";
+  collapseBlankLines: boolean;
+  rules: CustomReplacementRule[];
+}
+
+export interface PlainTextConversionEditor {
+  config: PlainTextConversionSettings;
+  recovery: unknown | null;
+  diagnostics: string[];
+  revision: string;
+}
+
+export type PlainTextInputFormat = "text" | "html";
+
+export interface PlainTextPreview {
+  output: string;
+  changed: boolean;
+}
+
 export interface OnboardingLegacyImport {
   checked: boolean;
   imported: boolean;
@@ -194,6 +232,7 @@ export interface Clipboard {
   preview: Preview;
   feedback: Feedback;
   filters: Filters;
+  plainTextConversion: PlainTextConversionSettings;
 }
 
 export interface Update {

@@ -23,7 +23,14 @@ import type {
   ClipboardSubKind,
   UpdateNoteResult,
 } from "@/types/clipboard";
-import type { Settings, SettingsPatch } from "@/types/settings";
+import type {
+  PlainTextConversionEditor,
+  PlainTextConversionSettings,
+  PlainTextInputFormat,
+  PlainTextPreview,
+  Settings,
+  SettingsPatch,
+} from "@/types/settings";
 import { getMessageApi, getModalApi } from "@/utils/feedback";
 import { log } from "@/utils/log";
 import { confirmClearClipboardItems } from "./confirmClearClipboardItems";
@@ -338,6 +345,75 @@ export const getSettings = () => {
   return call<Settings>(
     TAURI_COMMAND.GET_SETTINGS,
     "commands:labels.loadSettings",
+  );
+};
+
+/**
+ * Read rule drafts, isolated recovery data, and the section revision from Rust.
+ */
+export const getPlainTextConversionEditor = () => {
+  return call<PlainTextConversionEditor>(
+    TAURI_COMMAND.GET_PLAIN_TEXT_CONVERSION_EDITOR,
+    "commands:labels.getPlainTextConversionEditor",
+  );
+};
+
+/**
+ * Commit a full rule draft without overwriting a newer edit in another window.
+ */
+export const savePlainTextConversionSettings = (
+  config: PlainTextConversionSettings,
+  expectedRevision: string,
+) => {
+  return call<Settings>(
+    TAURI_COMMAND.SAVE_PLAIN_TEXT_CONVERSION_SETTINGS,
+    "commands:labels.savePlainTextConversionSettings",
+    { config, expectedRevision },
+  );
+};
+
+/**
+ * Preview a manually entered example without reading or changing the clipboard.
+ */
+export const previewPlainTextConversion = (
+  input: string,
+  inputFormat: PlainTextInputFormat,
+  config: PlainTextConversionSettings,
+) => {
+  return call<PlainTextPreview>(
+    TAURI_COMMAND.PREVIEW_PLAIN_TEXT_CONVERSION,
+    "commands:labels.previewPlainTextConversion",
+    { config, input, inputFormat },
+  );
+};
+
+export type PlainTextConversionResult =
+  | "converted"
+  | "unchanged"
+  | "unsupported"
+  | "changed"
+  | "busy";
+
+/** Convert the current system clipboard without selecting or using a history item. */
+export const convertCurrentClipboardToPlainText = () => {
+  return call<PlainTextConversionResult>(
+    TAURI_COMMAND.CONVERT_CURRENT_CLIPBOARD_TO_PLAIN_TEXT,
+    "commands:labels.convertCurrentClipboardToPlainText",
+  );
+};
+
+export interface ShortcutStatus {
+  action: string;
+  binding: string;
+  active: boolean;
+  error: string | null;
+}
+
+/** Retrieve native registration state and disabled bindings diagnosed during settings load. */
+export const getShortcutStatus = () => {
+  return call<ShortcutStatus[]>(
+    TAURI_COMMAND.GET_SHORTCUT_STATUS,
+    "commands:labels.loadShortcutStatus",
   );
 };
 
@@ -1289,12 +1365,53 @@ export const showTaskbarIcon = (visible: boolean) => {
  * 设置剪贴板窗口固定态：Rust 侧立即生效（影响 resign_key / 外部点击自动隐藏逻辑）。
  */
 export const setClipboardWindowPinned = (pinned: boolean) => {
-  return call<void>(
+  return call<ClipboardWindowPinState>(
     TAURI_COMMAND.SET_CLIPBOARD_WINDOW_PINNED,
     "commands:labels.setClipboardWindowPinned",
     {
       pinned,
     },
+  );
+};
+
+export interface ClipboardWindowPinState {
+  pinned: boolean;
+  revision: number;
+}
+
+export interface ConversionFeedback {
+  requestId: number;
+  message: string;
+}
+
+/**
+ * 建窗后主动拉取待显示提示，避免首次事件在订阅前到达。
+ */
+export const getConversionFeedbackState = () => {
+  return call<ConversionFeedback | null>(
+    TAURI_COMMAND.GET_CONVERSION_FEEDBACK_STATE,
+    "commands:labels.getConversionFeedbackState",
+  );
+};
+
+/**
+ * 当前提示已渲染后交给Rust显示并计时；旧ID和重复确认不会重复弹出。
+ */
+export const presentConversionFeedback = (requestId: number) => {
+  return call<void>(
+    TAURI_COMMAND.PRESENT_CONVERSION_FEEDBACK,
+    "commands:labels.presentConversionFeedback",
+    { requestId },
+  );
+};
+
+/**
+ * 拉取 Rust 窗口固定事实状态，用于 WebView 重挂载及事件查询校准。
+ */
+export const getClipboardWindowPinState = () => {
+  return call<ClipboardWindowPinState>(
+    TAURI_COMMAND.GET_CLIPBOARD_WINDOW_PIN_STATE,
+    "commands:labels.getClipboardWindowPinState",
   );
 };
 

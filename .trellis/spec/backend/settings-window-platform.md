@@ -5,8 +5,9 @@
 Settings live in Rust under `src-tauri/src/settings/`.
 
 - `model.rs` defines the serialized shape, defaults, enums, and helper methods.
-- Every settings struct uses `#[serde(default, rename_all = "camelCase")]`, so
-  newly added fields fall back to defaults.
+- Top-level and grouped settings use `#[serde(default, rename_all = "camelCase")]`,
+  so newly added fields fall back to defaults. Individual custom replacement
+  rules require complete fields rather than completing malformed saved entries.
 - `store.rs` persists `<app_data_dir>/config/settings.json` with a temp file and
   atomic rename.
 - `SettingsStore::update` accepts only object patches, deep-merges objects,
@@ -95,6 +96,225 @@ Rust is the source of truth. `commands::settings::update_settings` and
 `reset_settings` emit `settings://updated` after persistence and side effects.
 `src/stores/settings.ts` listens to that event and updates the Valtio mirror.
 
+## Scenario: Custom Formatting Rule Settings
+
+### 1. Scope / Trigger
+
+Active current-clipboard conversion has a new additive
+`clipboard.plainTextConversion` settings subtree. Rust owns persistence,
+validation, recovery, and execution. A dedicated preference action under the
+Reuse tab (Chinese display label 操作) opens the rule editor; React holds only a
+local draft. Clipboard-pipeline.md defines execution and resource budgets.
+
+### 2. Signatures
+
+- `PlainTextConversionSettings` fields serialize as `linkStyle`, `imageStyle`,
+  `listStyle`, `taskStyle`, `tableSeparator`, `collapseBlankLines`, and `rules`.
+- Enum values: `title | titleAndUrl | url`, `alt | omit`,
+  `textOnly | readableMarkers`, `status | textOnly`, and `tab | space`.
+- Rules: `{ id, name, enabled, mode: literal | regex, pattern, replacement }`.
+- `get_plain_text_conversion_editor(AppHandle)` returns
+  `{ config, recovery: JSON | null, diagnostics: string[], revision: string }`.
+- `save_plain_text_conversion_settings(AppHandle, config, expected_revision)`
+  returns the complete `Settings`; JS arguments use `expectedRevision`.
+- `preview_plain_text_conversion(AppHandle, input, input_format, config)` returns
+  `{ output, changed }`; JS arguments use `inputFormat: text | html`.
+- `SettingsStore::prepare_from_file(&Path)` validates a full replacement without
+  writing. `commit_snapshot_with_patch` preserves explicit-repair intent through
+  ordinary and shortcut updates.
+
+### 3. Contracts
+
+Missing fields use serde defaults: link title, image alt, text-only list indentation,
+task status, tab columns, no blank-line collapse, and no custom rules. No schema
+or migration change is needed; this does not claim old-binary round-trip retention
+of the new subtree. `CustomReplacementRule` requires complete typed fields rather
+than silently completing a damaged rule. TS types/default builder mirror Rust.
+
+Startup/rebase remove the new subtree before deserializing unrelated settings,
+then validate it separately. Valid rules become the runtime snapshot. A malformed
+or semantically invalid subtree falls back only this feature to defaults, retains
+the original JSON in session recovery state, and records a localized editor
+diagnostic. Startup never writes the fallback over the source file. If the raw
+subtree is typed, the editor returns it for repair even when regex validation
+fails; otherwise it returns safe defaults plus the raw JSON. JSON null is a valid
+preserved damaged value, so the UI uses nonempty diagnostics to show recovery,
+not merely a `recovery != null` check.
+
+Unrelated settings updates validate the safe effective candidate and write the
+preserved damaged subtree back unchanged. Do not make invalid loaded rules block
+unrelated saves or disappear on the next save. Explicit updates to this subtree
+are strict and clear recovery only after their successful disk write. Dedicated
+save/default-save, global reset, and successful full replacement also clear it.
+Rebase replaces recovery with the new location's load result.
+
+Editor get/save serialize access with the existing operation gate. Revision is
+blake3 over the editable raw/effective subtree with recursive object-key sorting;
+array order remains significant. Unrelated updates do not conflict. A dedicated
+save compares expected revision while holding the gate, validates the complete
+config, atomically persists, updates memory, then emits settings://updated.
+Conflict or validation/write failure preserves effective settings, recovery, and
+draft. Ordinary update/shortcut prepare and commit also validate complete rules.
+
+Backup merge validates its settings candidate through prepare_update; full
+overwrite uses prepare_from_file. This preflight runs before changing production
+history, live database, or resources, so invalid new rules cannot partially import
+history before rejection. Actual settings application remains strict. This is
+pre-validation of rule/settings errors, not a new all-files backup transaction or
+a guarantee against later IO/native registration failure.
+
+Dedicated editor get/save and preview use blocking workers for synchronous
+regex/IO work. Acquire State inside the moved AppHandle closure, and never retain
+locks across await. Join failures use stable logs and localized short errors.
+
+The Ant Design Modal edits an independent draft; cancel leaves runtime unchanged,
+restore-defaults edits only this draft, and save failure retains it. The rule
+Virtuoso list lives inside a container with an explicit UnoCSS height; its default
+percentage height otherwise collapses in the auto-sized modal body. Adding and
+reopening rules must render editable cards, including in a small viewport.
+Pattern and replacement preserve exact whitespace through dedicated textareas. Rule cards use
+Virtuoso, with UUID keys and at most 32 entries. Each modal instance uses its own
+window dirty owner to prevent idle destruction, with paired late-request cleanup.
+Preview only processes manually entered examples using the draft; stale responses
+cannot overwrite newer inputs, and output is displayed as text.
+
+### 4. Validation & Error Matrix
+
+- Missing new subtree/fields -> compatible defaults.
+- Malformed loaded subtree/invalid regex -> local recovery, other settings intact,
+  no startup rewrite; original JSON available for repair.
+- Unrelated save during recovery -> succeeds under normal validation and keeps
+  raw damaged subtree and diagnostics.
+- Invalid explicit patch/full import -> reject before persistence; backup preflight
+  rejects before history/DB/resource side effects.
+- Stale revision -> localized conflict, no overwrite.
+- Successful explicit repair/default-save/reset/full replacement -> clear recovery.
+- Settings-file/patch typed parse errors for the new subtree -> localized generic configuration error,
+  never a serde message echoing raw rule text.
+
+### 5. Good/Base/Bad Cases
+
+Good: bad regex is isolated on load; a theme save keeps its raw source; the user
+repairs and explicitly saves it. Base: an old file without the subtree produces
+the old conversion output. Bad: sanitize to defaults and discard the raw subtree
+when the next unrelated preference is saved, or validate imported rules only
+after replacing live history.
+
+### 6. Tests Required
+
+Use independent settings copies for missing-field compatibility, malformed and
+semantic recovery, retained original JSON after unrelated updates, explicit repair,
+reset, import preflight, rebase, and revision conflicts. UI acceptance covers draft
+cancel/failure/defaults, saved reload, virtual scrolling, preview parity, recovery
+display including raw null, and window dirty-owner lifecycle. When the user owns
+functional testing, record it as pending; lint/typecheck/build are separate evidence.
+
+Required observable assertions, pending independent functional verification:
+
+- Loading `{ "general": { "autoStart": true } }` keeps autoStart true and yields
+  default title/alt/textOnly/status/tab, collapse false, and an empty rules array.
+- A copied valid settings file with only a bad new regex retains its original
+  unrelated fields, exposes nonempty diagnostics/raw recovery, and is byte-identical
+  on disk immediately after load.
+- Saving an unrelated theme change retains JSON equality of the original bad
+  subtree and keeps recovery; successful explicit correction clears diagnostics
+  and persists the corrected complete subtree.
+- A draft opened at revision A is rejected after another save produces revision B;
+  changing only a theme does not alter the rule revision.
+- An invalid-rule backup rejects before any production history row/resource/database
+  is changed; a valid replacement clears prior recovery after persistence.
+- Cancel/default-only edit leaves saved config unchanged; saving defaults changes
+  only this subtree. Closing an old modal cannot clear a new modal's dirty owner.
+
+### 7. Wrong vs Correct
+
+Wrong: deserialize the full file with invalid new rules, return all defaults, then
+write them on the next theme change. Correct: isolate only the new subtree, retain
+its raw JSON, preserve it on unrelated saves, and clear recovery after explicit
+successful repair.
+
+## Scenario: Configurable Clipboard Shortcuts
+
+### 1. Scope / Trigger
+
+Window action rebinding spans persisted settings, React keyboard events, Windows
+non-focusable navigation hooks, native menus, and global shortcut registration.
+
+### 2. Signatures
+
+- `Shortcuts.convert_to_plain_text: String` -> `convertToPlainText`.
+- `Shortcuts.window_actions: BTreeMap<String, String>` -> `windowActions`.
+- `get_shortcut_status` returns `{ action, binding, active, error }[]`.
+- Events: `shortcut://status`, `shortcut://conflict`; Rust constants mirrored in TS.
+- Native action IDs: `open_clipboard`, `open_preference`, `convert_to_plain_text`.
+
+### 3. Contracts
+
+Default conversion is Control+Shift+V on both platforms. Missing new fields and
+missing known action IDs receive defaults; explicit empty strings remain disabled.
+Known window IDs: paste, pastePlain, copy, open, favorite, pin, note, delete,
+deleteForward. The two deletion entries retain the original Backspace/Delete
+paths. Unknown string-valued IDs survive serialization but never execute.
+
+Window bare keys are Enter/Backspace/Delete and F1—F12. Navigation, Space, Esc,
+Tab, digit shortcuts, and fixed helper actions retain dedicated handlers.
+Aliases/modifier order normalize; all four modifiers must match exactly.
+An isolated modifier is never a shortcut primary key. The window recorder accepts
+bare Backspace/Delete as bindings and uses its clear button to disable a binding;
+the global recorder retains deletion-key clearing.
+Shifted digits/punctuation resolve the same base key as the recorder and Windows
+hook; `Control+Shift+1` must match the event whose key is `!` and code is `Digit1`.
+
+Settings updates serialize read/prepare/commit. Native registration has its own
+gate; shortcut updates hold both through registration, persistence, and rollback.
+Delayed resume reads the latest snapshot inside the native gate. Window-only
+updates do not re-register unrelated globals. Recording tests new global
+registrations while callbacks remain suspended, then unregisters them until resume.
+Each recorder owns one suspension request; blur and unmount release that same
+request at most once. Cancellation, blur, refocus, and unmount invalidate pending
+key events before they can save. A failed native suspension rolls back only its
+own pause count and schedules restoration only when no other recorder holds it.
+
+Import and storage rebase re-apply registrations and emit actual status; failed
+registrations retain imported/rebased intent with a visible inactive outcome.
+Reset/import/rebase must not equate settings persistence with OS registration.
+
+### 4. Validation & Error Matrix
+
+- Semantic duplicates across global/window actions or Win+V -> reject writes.
+- Fixed gesture shadowing, unsupported primary key, bare letter -> reject writes.
+- Malformed new field types -> reject update/import; tolerant disk load disables
+  damaged new bindings without replacing unrelated settings.
+- Invalid loaded new bindings -> disable and retain session-only action diagnostics
+  in SettingsStore. `get_shortcut_status` merges a localized error for the native
+  converter ID or known window ID, even when its value is empty. Successful explicit
+  edits (including intentional disable), restore, or replacement clear acknowledged
+  warnings; rebase replaces them with diagnostics for its loaded file. Legacy
+  globals remain intact for native registration diagnostics.
+- Native prepare/write failure -> retain prior settings and attempt native restore;
+  restore failure remains visible in actual status.
+
+### 5. Good/Base/Bad Cases
+
+- Good: copy bound to Control+Shift+Y executes only that exact combination.
+- Base: missing fields keep existing Enter/CmdOrCtrl+C behaviors.
+- Bad: Control alone must not match Control+F because it appears among modifiers.
+
+### 6. Tests Required
+
+Old custom globals/winV/unrelated fields, explicit disables, partial maps,
+unknown IDs, malformed new types, aliases/order, exact modifiers, reserved
+actions, and Win+V collisions need assertions. UI checks cover recording,
+cancel/blur/unmount, restore, failure rollback, and hint/menu agreement.
+Empty disabled converter/window rows display load warnings; successful correction
+clears only acknowledged diagnostics. No diagnostic field is persisted to settings.
+Native Windows hooks and macOS menus still require real desktop verification.
+
+### 7. Wrong vs Correct
+
+Wrong: `parts.includes(event.key)` or `ctrlKey && key === 'c'` for full matching.
+Correct: compare the unique non-modifier primary key and all modifier booleans.
+
 Do not mutate `settingsState` directly from UI components. Even the initiating
 window waits for the broadcast so all windows share the same snapshot.
 
@@ -141,7 +361,7 @@ and preview payloads. Treat it as a cross-layer contract change.
   - TypeScript `WINDOW_LABEL.CLIPBOARD = "clipboard"`
   - Tauri config window label `"clipboard"`
 - Commands:
-  - `set_clipboard_window_pinned(pinned: bool) -> ()`
+  - `set_clipboard_window_pinned(AppHandle, pinned: bool) -> ClipboardWindowPinState`
   - `set_clipboard_window_auto_hide_suspended(suspended: bool) -> ()`
 - Preview payload:
   - `ClipboardPreviewState.clipboardWindow: PreviewClipboardWindowRect | null`
@@ -274,10 +494,12 @@ Tauri command registration, and the React keyboard abstraction.
   targets keep native browser keyboard behavior while editing is active.
 - In the Windows clipboard window only, editable controls with
   `data-allow-global-keyboard="true"` are handoff inputs: when they receive
-  navigation/function keys such as Ctrl, Arrow keys, Enter, Escape, or Tab,
+  navigation/function keys such as Arrow keys, Enter, Escape, or Tab,
   `useKeyboardEvent` must blur the control before running the global keyboard
   handler so clipboard shortcuts keep working. macOS keeps its existing browser
   keyboard bubbling path.
+- Modifier-only keydown/keyup updates hint state without blurring an editable
+  control; subsequent character/copy shortcuts retain native editing behavior.
 - Shortcut hint components must not clear their active state on the Windows
   clipboard window blur caused by Ctrl handoff while the modifier key is still
   pressed; they should remain active until the matching modifier keyup arrives.
@@ -302,8 +524,8 @@ Tauri command registration, and the React keyboard abstraction.
   non-focusable and returns focus to the prior app.
 - Good: user focuses search, presses ArrowDown, and the search input blurs
   before the list selection shortcut runs.
-- Good: user focuses search, holds Ctrl, the search input blurs, and shortcut
-  hints stay visible until Ctrl is released.
+- Good: user focuses search and holds Ctrl; search remains focused and shortcut
+  hints update until Ctrl is released. Copy/text edits remain native.
 - Good: user presses Ctrl+F while the Windows clipboard window is non-focusable,
   the window enters editing mode first, and the search input receives focus.
 - Base: no editable control is focused; Windows navigation continues through
@@ -762,3 +984,88 @@ app.state::<UpdateState>().install_downloaded(&version)?;
 app.request_restart();
 Ok(())
 ```
+
+## Scenario: Pinned Clipboard Window and Conversion Success Hint
+
+### 1. Scope / Trigger
+
+Window pin is a session fact, distinct from row pinning and temporary file-dialog
+auto-hide suspension. Global conversion feedback must work with a hidden clipboard
+window and preserve the external application's foreground/input target.
+
+### 2. Signatures
+
+- `get_clipboard_window_pin_state() -> { pinned: bool, revision: u64 }`.
+- `set_clipboard_window_pinned(AppHandle, pinned: bool)` returns the same state.
+- `window://pinned` mirrors the state; Header rejects lower revisions.
+- `convert_current_clipboard_with_feedback(&AppHandle)` shares command/global
+  success handling; low-level `convert_current_clipboard_to_plain_text` stays UI-free.
+- `get_conversion_feedback_state() -> Option<{ requestId: u64, message: String }>`.
+- `present_conversion_feedback(AppHandle, request_id: u64)` accepts rendered IDs.
+- `clipboard://conversion-feedback` targets window label `conversion-feedback`.
+
+### 3. Contracts
+
+The existing topmost levels remain active. Pin keeps the clipboard window expanded
+on loss of focus and copy/paste; explicit Esc/toggle/close still hides it without
+clearing pin. Clicking pin again cancels; restart resets false. No settings field
+or migration is introduced. UI pulls facts on mount/visibility and listens to state
+events; revision prevents late query/save responses reverting newer state. Pending
+save and shortcuts cannot double-toggle; errors retain the last confirmed state.
+
+Windows pinned navigation pauses on outside clicks/foreground changes. Already
+consumed keys retain their release pairing; clicking inside or explicitly reopening
+resumes interaction. Editing disables the hook, restores the external foreground
+before re-enabling navigation, and preserves pause if focus was handed to another
+app. The temporary file-dialog suspension is independent of pin.
+
+Only `Converted` requests the exact zh-CN `已经转换格式` / en-US `Formatting converted`
+message. A single lazy-created transparent, mouse-transparent window is reused.
+Windows uses `SWP_NOACTIVATE`, macOS a non-key NSPanel at Status level. Rust positions
+it near the bottom of the cursor's monitor work area and hides after one second
+from actual show. New successes replace the one message; no stack of toasts.
+
+Windows native `SetWindowPos(SWP_SHOWWINDOW)` bypasses Tao's cached visibility;
+hide through native `ShowWindow(SW_HIDE)` on the main thread as well. Calling
+Tauri `hide()` with the cached flag still false can be a no-op. `ShowWindow`'s
+return value describes previous visibility, not success; do not treat false as
+a hide failure. macOS continues pairing panel show/hide.
+
+The frontend's post-commit effect acknowledges the rendered ID; do not use rAF in a
+hidden WebView because Chromium can suspend it. Pull fallback covers a cold window
+missing the initial event. Pending IDs and displayed IDs are separate: a new request
+that never renders must not cancel the old displayed window's hide timer. Only an
+actual successful show updates DISPLAYED_ID. Old/duplicate acks are no-ops; requests
+older than ten seconds are not shown. Feedback errors are logged separately and
+never cause conversion retry or reinterpret a successful native write as failed.
+
+### 4. Validation & Error Matrix
+
+- Failed pin command -> wrapper toast, retained confirmed state.
+- Late lower revision -> ignored.
+- Unchanged/Unsupported/Changed/Busy/Err -> no success hint.
+- Missing feedback window/build/show failure -> log; successful clipboard remains.
+- New pending request without render -> old displayed hint still expires.
+- Old displayed timer after newer successful show -> no hide of the new hint.
+
+### 5. Good/Base/Bad Cases
+
+Good: hidden clipboard + external editor + Ctrl+Shift+V converts markup and displays
+one small hint without focus movement. Base: ordinary Text-only produces no hint.
+Bad: antd message in the hidden clipboard window, native success dialog, or letting
+pinned navigation consume an outside application's arrow/delete/copy keys.
+
+### 6. Tests Required
+
+UI covers initialization/remount/revision/save failure/double trigger and feedback
+pull/events/old IDs/one ack per ID. Native Windows tests cover outside click and
+app switching, search-to-list focus restore, actual clipboard formats, cold/warm
+hint show/expiry and unchanged/unsupported feedback. Repeat on macOS; absent device
+is pending, never inferred from a platform flag or Windows pass.
+
+### 7. Wrong vs Correct
+
+Wrong: replace pending request ID and use it to decide whether an already displayed
+hint may hide; a failed new render can keep the old window visible forever.
+Correct: timeouts compare the last successfully displayed ID; pending requests do
+not update that ID. No persistence is added for a session-only pin policy.

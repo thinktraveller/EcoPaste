@@ -1,3 +1,4 @@
+pub mod feedback;
 pub mod lifecycle;
 pub(super) mod position;
 pub mod preview;
@@ -25,6 +26,7 @@ pub const PREFERENCE_WINDOW_LABEL: &str = "preference";
 pub const CLIPBOARD_PREVIEW_WINDOW_LABEL: &str = "clipboard-preview";
 pub const ONBOARDING_WINDOW_LABEL: &str = "onboarding";
 pub const UPDATE_WINDOW_LABEL: &str = "update";
+pub const CONVERSION_FEEDBACK_WINDOW_LABEL: &str = "conversion-feedback";
 
 /// 偏好页定位高亮事件。前端收到后切到目标设置项所在分类并滚动高亮。
 const PREFERENCE_HIGHLIGHT_EVENT: &str = "preference://highlight-setting";
@@ -45,24 +47,51 @@ struct PreferenceHighlightPayload {
 
 /// 剪贴板窗口「固定」状态：true 时失焦不自动隐藏（点击窗外、切到其它 App 都不会隐藏），
 /// 由前端 Pin 按钮 / 快捷键切换；macOS resign_key 与 Windows 外部点击钩子都尊重这个开关。
-static CLIPBOARD_WINDOW_PINNED: AtomicBool = AtomicBool::new(false);
+static CLIPBOARD_WINDOW_PIN_STATE: Mutex<ClipboardWindowPinState> =
+    Mutex::new(ClipboardWindowPinState {
+        pinned: false,
+        revision: 0,
+    });
+const WINDOW_PINNED_EVENT: &str = "window://pinned";
+
+#[derive(Clone, Copy, serde::Serialize)]
+pub struct ClipboardWindowPinState {
+    pub pinned: bool,
+    pub revision: u64,
+}
 /// 剪贴板窗口自动隐藏的临时暂停状态，用于系统文件选择等会短暂转移焦点的原生交互。
 static CLIPBOARD_WINDOW_AUTO_HIDE_SUSPENDED: AtomicBool = AtomicBool::new(false);
 
 /// 返回用户是否显式固定剪贴板窗口；复制后隐藏等路径仍需读取这个用户态开关。
 pub fn is_clipboard_window_pinned() -> bool {
-    CLIPBOARD_WINDOW_PINNED.load(Ordering::Relaxed)
+    clipboard_window_pin_state().pinned
+}
+
+/// 重建 WebView 时拉取进程内状态；revision 防止迟到的查询覆盖较新的事件。
+pub fn clipboard_window_pin_state() -> ClipboardWindowPinState {
+    *CLIPBOARD_WINDOW_PIN_STATE
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
 }
 
 /// 判断剪贴板窗口当前是否允许因失焦或外部点击自动隐藏。
 pub fn should_auto_hide_clipboard_window() -> bool {
-    !CLIPBOARD_WINDOW_PINNED.load(Ordering::Relaxed)
-        && !CLIPBOARD_WINDOW_AUTO_HIDE_SUSPENDED.load(Ordering::Relaxed)
+    !is_clipboard_window_pinned() && !CLIPBOARD_WINDOW_AUTO_HIDE_SUSPENDED.load(Ordering::Relaxed)
 }
 
-/// 设置用户控制的剪贴板窗口固定态。
-pub fn set_clipboard_window_pinned(pinned: bool) {
-    CLIPBOARD_WINDOW_PINNED.store(pinned, Ordering::Relaxed);
+/// 设置进程内固定态并广播事实状态；现有顶层层级不变，显式hide不取消，重启重置。
+pub fn set_clipboard_window_pinned(app: &AppHandle, pinned: bool) -> ClipboardWindowPinState {
+    let mut state = CLIPBOARD_WINDOW_PIN_STATE
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    if state.pinned != pinned {
+        state.pinned = pinned;
+        state.revision += 1;
+        if let Err(err) = app.emit(WINDOW_PINNED_EVENT, *state) {
+            log::warn!("emit clipboard pin state failed: {err}");
+        }
+    }
+    *state
 }
 
 /// 临时暂停剪贴板窗口自动隐藏，不改变用户控制的固定态。

@@ -364,6 +364,9 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
 
 async fn rebase_storage_states(app: &AppHandle) -> Result<Settings> {
     let settings = app.state::<crate::settings::SettingsStore>().rebase(app)?;
+    if let Err(err) = crate::shortcut::apply(app, &settings.shortcuts) {
+        log::warn!("shortcut registration after storage rebase incomplete: {err}");
+    }
     app.state::<crate::window::WindowStateStore>().rebase(app)?;
     app.state::<crate::clipboard::ImageStore>().rebase(app)?;
     app.state::<crate::clipboard::AppIconStore>().rebase(app)?;

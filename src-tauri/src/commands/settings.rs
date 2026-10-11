@@ -1,7 +1,9 @@
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::core::Result;
-use crate::settings::{Settings, SettingsStore};
+use crate::core::{AppError, Result};
+use crate::settings::{
+    PlainTextConversionEditor, PlainTextConversionSettings, Settings, SettingsStore,
+};
 use crate::{admin, autostart, shortcut, tray, window};
 
 /// 与前端 `src/constants/events.ts` 的 `TAURI_EVENT.SETTINGS_UPDATED` 一一对应。
@@ -10,6 +12,52 @@ const SETTINGS_UPDATED_EVENT: &str = "settings://updated";
 #[tauri::command]
 pub async fn get_settings(app: AppHandle) -> Result<Settings> {
     Ok(app.state::<SettingsStore>().snapshot())
+}
+
+/// Read the editable rules and preserved recovery source without accessing the system clipboard.
+#[tauri::command]
+pub async fn get_plain_text_conversion_editor(app: AppHandle) -> Result<PlainTextConversionEditor> {
+    let language = crate::i18n::current_language(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<SettingsStore>().plain_text_conversion_editor()
+    })
+    .await
+    .map_err(|_| {
+        log::warn!("conversion rule editor worker interrupted");
+        AppError::Other(anyhow::anyhow!(
+            crate::i18n::conversion_settings::unavailable(language)
+        ))
+    })?
+}
+
+/// Save the full validated rule draft only when its source section is still current.
+#[tauri::command]
+pub async fn save_plain_text_conversion_settings(
+    app: AppHandle,
+    config: PlainTextConversionSettings,
+    expected_revision: String,
+) -> Result<Settings> {
+    let language = crate::i18n::current_language(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let next = app
+            .state::<SettingsStore>()
+            .save_plain_text_conversion(config, &expected_revision)?;
+        emit_settings_updated(&app, &next);
+        Ok(next)
+    })
+    .await
+    .map_err(|_| {
+        log::warn!("conversion rule save worker interrupted");
+        AppError::Other(anyhow::anyhow!(
+            crate::i18n::conversion_settings::unavailable(language)
+        ))
+    })?
+}
+
+/// Query actual OS registration outcomes even when startup events preceded WebView creation.
+#[tauri::command]
+pub async fn get_shortcut_status(app: AppHandle) -> Result<Vec<shortcut::ShortcutStatus>> {
+    Ok(shortcut::status(&app))
 }
 
 /// 暂停当前全局快捷键注册；用于前端录入快捷键期间避免旧绑定被触发。
@@ -51,13 +99,11 @@ pub async fn update_settings(app: AppHandle, patch: serde_json::Value) -> Result
         })
         .unwrap_or(false);
 
-    let next = app.state::<SettingsStore>().update(patch)?;
-
-    if touches_shortcuts {
-        if let Err(err) = shortcut::apply(&app, &next.shortcuts) {
-            log::warn!("re-apply shortcuts after settings update failed: {err}");
-        }
-    }
+    let next = if touches_shortcuts {
+        shortcut::update_settings(&app, patch)?
+    } else {
+        app.state::<SettingsStore>().update(patch)?
+    };
 
     if touches_tray {
         if let Err(err) = tray::apply(&app, &next) {

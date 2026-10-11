@@ -6,4 +6,6 @@
 pub const NAV_EVENT: &str = "keyboard://nav";
 
 mod windows;
-pub use windows::{disable_navigation_keys, enable_navigation_keys};
+pub use windows::{
+    disable_navigation_keys, enable_navigation_keys, set_pinned_navigation_interaction,
+};

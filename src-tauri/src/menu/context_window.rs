@@ -124,13 +124,11 @@ pub(super) fn show_for_clipboard_item(
 ) -> Result<()> {
     let lang = crate::i18n::current_language(app);
     let groups = build_groups(
-        &request.available_actions,
-        &request.groups,
-        request.current_group_id.as_deref(),
+        &app.state::<crate::settings::SettingsStore>()
+            .snapshot()
+            .shortcuts,
+        request,
         lang,
-        request.is_favorite,
-        request.is_pinned,
-        request.has_note,
     );
     if groups.is_empty() {
         return Ok(());
@@ -211,17 +209,14 @@ pub fn show_submenu(app: &AppHandle, input: ShowContextSubmenuInput) -> Result<(
     Ok(())
 }
 
+/// Build menu groups from the item request and current configured accelerators.
 fn build_groups(
-    available: &[ClipboardMenuAction],
-    clipboard_groups: &[ClipboardMenuGroup],
-    current_group_id: Option<&str>,
+    shortcuts: &crate::settings::Shortcuts,
+    request: &ClipboardItemMenuRequest,
     lang: Language,
-    is_favorite: bool,
-    is_pinned: bool,
-    has_note: bool,
 ) -> Vec<Vec<ContextMenuItemPayload>> {
-    let mut active = available.to_vec();
-    if !clipboard_groups.is_empty() {
+    let mut active = request.available_actions.clone();
+    if !request.groups.is_empty() {
         active.push(ClipboardMenuAction::MoveToGroup);
     }
 
@@ -233,9 +228,20 @@ fn build_groups(
                 .filter(|a| active.contains(a))
                 .map(|a| ContextMenuItemPayload {
                     action: *a,
-                    label: a.label(lang, is_favorite, is_pinned, has_note).into(),
-                    accelerator: a.accelerator().map(String::from),
-                    groups: build_group_items(*a, clipboard_groups, current_group_id),
+                    label: a
+                        .label(
+                            lang,
+                            request.is_favorite,
+                            request.is_pinned,
+                            request.has_note,
+                        )
+                        .into(),
+                    accelerator: a.accelerator(shortcuts),
+                    groups: build_group_items(
+                        *a,
+                        &request.groups,
+                        request.current_group_id.as_deref(),
+                    ),
                 })
                 .collect::<Vec<_>>()
         })

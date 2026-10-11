@@ -4,6 +4,16 @@ use crate::core::Result;
 use crate::settings::WindowPosition;
 use crate::window;
 
+#[tauri::command]
+pub async fn get_conversion_feedback_state() -> Option<window::feedback::ConversionFeedback> {
+    window::feedback::conversion_feedback_state()
+}
+
+#[tauri::command]
+pub async fn present_conversion_feedback(app: AppHandle, request_id: u64) -> Result<()> {
+    window::feedback::present_conversion_feedback(&app, request_id)
+}
+
 pub use window::lifecycle::LifecycleSnapshot;
 pub use window::preview::{ClipboardPreviewState, PreviewAnchorRect};
 
@@ -99,8 +109,16 @@ pub async fn position_window(
 }
 
 #[tauri::command]
-pub async fn set_clipboard_window_pinned(pinned: bool) {
-    window::set_clipboard_window_pinned(pinned);
+pub async fn set_clipboard_window_pinned(
+    app: AppHandle,
+    pinned: bool,
+) -> window::ClipboardWindowPinState {
+    window::set_clipboard_window_pinned(&app, pinned)
+}
+
+#[tauri::command]
+pub async fn get_clipboard_window_pin_state() -> window::ClipboardWindowPinState {
+    window::clipboard_window_pin_state()
 }
 
 /// 临时暂停剪贴板窗口自动隐藏，避免系统文件选择等原生交互触发失焦收窗。

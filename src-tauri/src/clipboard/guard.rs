@@ -48,6 +48,12 @@ impl WritebackGuard {
         });
     }
 
+    /// 显式转换需要重新采集结果，清除该内容的残留抑制及所有过期登记。
+    pub(crate) fn allow_capture(&self, content_hash: &str) {
+        let mut pending = self.pending.lock().expect("writeback guard poisoned");
+        pending.retain(|p| p.content_hash != content_hash && p.at.elapsed() <= SUPPRESS_TTL);
+    }
+
     /// 监听回调判断本次变更是否为自身写回所致：命中登记指纹（且未过期）则返回 `true`
     /// 并消费掉登记；否则返回 `false`。过期的登记顺带清理。
     pub fn should_skip(&self, content_hash: &str) -> bool {

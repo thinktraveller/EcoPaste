@@ -4,8 +4,11 @@
 
 pub mod clipboard_menu;
 pub mod commands;
+pub mod conversion_settings;
 mod en_us;
 mod keys;
+pub mod plain_text_conversion;
+pub mod shortcuts;
 pub mod tray;
 mod zh_cn;
 

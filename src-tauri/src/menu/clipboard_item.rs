@@ -92,21 +92,26 @@ impl ClipboardMenuAction {
     }
 
     /// 加速键文案（muda 与前端菜单共用 `"CmdOrCtrl+X"` 平台无关写法）。
-    pub(super) fn accelerator(self) -> Option<&'static str> {
-        match self {
-            Self::Paste => Some("Enter"),
-            Self::PasteAsPlainText | Self::PasteAsPath => Some("CmdOrCtrl+Enter"),
-            Self::Copy => Some("CmdOrCtrl+C"),
-            Self::SaveImage => None,
+    pub(super) fn accelerator(self, shortcuts: &crate::settings::Shortcuts) -> Option<String> {
+        let action = match self {
+            Self::Paste => "paste",
+            Self::PasteAsPlainText | Self::PasteAsPath => "pastePlain",
+            Self::Copy => "copy",
+            Self::SaveImage => return None,
             Self::OpenLink | Self::SendEmail | Self::RevealInFinder | Self::RevealInExplorer => {
-                Some("CmdOrCtrl+O")
+                "open"
             }
-            Self::ToggleFavorite => Some("CmdOrCtrl+D"),
-            Self::TogglePinned => Some("CmdOrCtrl+T"),
-            Self::MoveToGroup => None,
-            Self::EditNote => Some("CmdOrCtrl+M"),
-            Self::Delete => Some("CmdOrCtrl+Backspace"),
+            Self::ToggleFavorite => "favorite",
+            Self::TogglePinned => "pin",
+            Self::MoveToGroup => return None,
+            Self::EditNote => "note",
+            Self::Delete => "delete",
+        };
+        let binding = shortcuts.window_actions.get(action)?;
+        if binding.is_empty() {
+            return None;
         }
+        crate::settings::shortcuts::Binding::parse(binding).map(|value| value.canonical())
     }
 }
 
@@ -379,7 +384,13 @@ mod native {
                         request.has_note,
                     ),
                     true,
-                    action.accelerator(),
+                    action
+                        .accelerator(
+                            &app.state::<crate::settings::SettingsStore>()
+                                .snapshot()
+                                .shortcuts,
+                        )
+                        .as_deref(),
                 )
                 .with_context(|| format!("build menu item {}", action.id()))?;
                 entries.push(Entry::Item(item));

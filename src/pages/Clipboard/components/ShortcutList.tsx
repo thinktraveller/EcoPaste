@@ -1,9 +1,13 @@
 import type { FC, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useSnapshot } from "valtio";
 import ScrollArea from "@/components/ScrollArea";
+import type { WindowShortcutAction } from "@/constants/shortcuts";
+import { settingsState } from "@/stores/settings";
 import { getShortcutKeyDisplays, type ShortcutPattern } from "@/utils/shortcut";
 
 interface Shortcut {
+  action?: WindowShortcutAction;
   labelKey: string;
   /** 按下顺序排列的按键，每个元素渲染为一个 kbd 徽标。 */
   keys: ShortcutPattern;
@@ -23,18 +27,32 @@ const Kbd: FC<{ children: ReactNode }> = (props) => {
 };
 
 const SHORTCUTS: Shortcut[] = [
-  { keys: "Enter", labelKey: "shortcuts.pasteSelected" },
-  { keys: "CmdOrCtrl+Enter", labelKey: "shortcuts.pasteSelectedPlain" },
+  { action: "paste", keys: "Enter", labelKey: "shortcuts.pasteSelected" },
+  {
+    action: "pastePlain",
+    keys: "CmdOrCtrl+Enter",
+    labelKey: "shortcuts.pasteSelectedPlain",
+  },
   { keys: ["CmdOrCtrl", "1-0"], labelKey: "shortcuts.pasteNth" },
   { keys: "Space", labelKey: "shortcuts.previewSelected" },
-  { keys: "CmdOrCtrl+C", labelKey: "shortcuts.copySelected" },
-  { keys: "CmdOrCtrl+O", labelKey: "shortcuts.openSelected" },
-  { keys: "CmdOrCtrl+M", labelKey: "shortcuts.noteSelected" },
-  { keys: "CmdOrCtrl+D", labelKey: "shortcuts.favoriteSelected" },
-  { keys: "CmdOrCtrl+T", labelKey: "shortcuts.pinSelected" },
+  { action: "copy", keys: "CmdOrCtrl+C", labelKey: "shortcuts.copySelected" },
+  { action: "open", keys: "CmdOrCtrl+O", labelKey: "shortcuts.openSelected" },
+  { action: "note", keys: "CmdOrCtrl+M", labelKey: "shortcuts.noteSelected" },
   {
+    action: "favorite",
+    keys: "CmdOrCtrl+D",
+    labelKey: "shortcuts.favoriteSelected",
+  },
+  { action: "pin", keys: "CmdOrCtrl+T", labelKey: "shortcuts.pinSelected" },
+  {
+    action: "delete",
     keys: ["CmdOrCtrl", "Backspace"],
     labelKey: "shortcuts.deleteSelected",
+  },
+  {
+    action: "deleteForward",
+    keys: "CmdOrCtrl+Delete",
+    labelKey: "shortcuts.deleteSelectedAlternate",
   },
   { keys: ["ArrowUp", "/", "ArrowDown"], labelKey: "shortcuts.navigate" },
   { keys: "CmdOrCtrl+F", labelKey: "shortcuts.focusSearch" },
@@ -63,13 +81,24 @@ const SHORTCUTS: Shortcut[] = [
  */
 const ShortcutList: FC = () => {
   const { t } = useTranslation("clipboard");
+  const settings = useSnapshot(settingsState);
+  const shortcuts = SHORTCUTS.map((item) => {
+    return {
+      ...item,
+      keys: item.action
+        ? (settings.shortcuts.windowActions[item.action] ?? "")
+        : item.keys,
+    };
+  }).filter((item) => {
+    return item.keys !== "";
+  });
 
   return (
     <ScrollArea
       className="-mx-3 max-h-120 w-72 px-3"
       contentClassName="flex flex-col gap-1"
     >
-      {SHORTCUTS.map((item) => (
+      {shortcuts.map((item) => (
         <div
           className="flex items-center justify-between gap-3 px-1 py-1"
           key={item.labelKey}

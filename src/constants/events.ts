@@ -4,6 +4,7 @@
  */
 export const TAURI_EVENT = {
   BACKUP_RECEIVED: "backup://received",
+  CLIPBOARD_CONVERSION_FEEDBACK: "clipboard://conversion-feedback",
   CLIPBOARD_GROUPS_UPDATED: "clipboard-groups://updated",
   CLIPBOARD_MENU_ACTION: "clipboard://menu-action",
   CLIPBOARD_UPDATED: "clipboard://updated",
@@ -13,9 +14,12 @@ export const TAURI_EVENT = {
   PREFERENCE_HIGHLIGHT_SETTING: "preference://highlight-setting",
   PREVIEW_UPDATED: "preview://updated",
   SETTINGS_UPDATED: "settings://updated",
+  SHORTCUT_CONFLICT: "shortcut://conflict",
+  SHORTCUT_STATUS: "shortcut://status",
   UPDATE_PROGRESS: "update://progress",
   WINDOW_BEFORE_DESTROY: "window://before-destroy",
   WINDOW_LIFECYCLE: "window://lifecycle",
+  WINDOW_PINNED: "window://pinned",
   WINDOW_VISIBILITY: "window://visibility",
 } as const;
 

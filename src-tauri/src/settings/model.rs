@@ -126,6 +126,10 @@ pub struct Shortcuts {
     pub open_preference: String,
     /// 仅 Windows：用 Win+V 唤起剪贴板窗口，替代系统剪贴板历史面板。默认关闭。
     pub win_v: bool,
+    #[serde(deserialize_with = "super::shortcuts::deserialize_binding")]
+    pub convert_to_plain_text: String,
+    #[serde(deserialize_with = "super::shortcuts::deserialize_window_actions")]
+    pub window_actions: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for Shortcuts {
@@ -134,6 +138,8 @@ impl Default for Shortcuts {
             open_clipboard: "Alt+C".into(),
             open_preference: "Alt+X".into(),
             win_v: false,
+            convert_to_plain_text: "Control+Shift+V".into(),
+            window_actions: super::shortcuts::default_window_actions(),
         }
     }
 }
@@ -151,6 +157,81 @@ pub struct Clipboard {
     pub preview: Preview,
     pub feedback: Feedback,
     pub filters: Filters,
+    pub plain_text_conversion: PlainTextConversionSettings,
+}
+
+/// 主动去格式转换的持久化规则；缺失字段保持已发布版本的输出。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PlainTextConversionSettings {
+    pub link_style: LinkStyle,
+    pub image_style: ImageStyle,
+    pub list_style: ListStyle,
+    pub task_style: TaskStyle,
+    pub table_separator: TableSeparator,
+    pub collapse_blank_lines: bool,
+    pub rules: Vec<CustomReplacementRule>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum LinkStyle {
+    #[default]
+    Title,
+    TitleAndUrl,
+    Url,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ImageStyle {
+    #[default]
+    Alt,
+    Omit,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ListStyle {
+    #[default]
+    TextOnly,
+    ReadableMarkers,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskStyle {
+    #[default]
+    Status,
+    TextOnly,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TableSeparator {
+    #[default]
+    Tab,
+    Space,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ReplacementMode {
+    #[default]
+    Literal,
+    Regex,
+}
+
+/// pattern/replacement 原样保存，空替换表示删除匹配内容。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomReplacementRule {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub mode: ReplacementMode,
+    pub pattern: String,
+    pub replacement: String,
 }
 
 /// 剪贴板内容类型采集开关。关闭后监听与手动读取都不入库对应类型。

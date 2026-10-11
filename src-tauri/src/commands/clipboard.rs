@@ -37,6 +37,37 @@ const DEFAULT_CLIPBOARD_GROUP_ICON: &str = "i-lets-icons:folder";
 const MAX_GROUP_NAME_CHARS: usize = 32;
 const MAX_GROUP_ICON_BYTES: usize = 256 * 1024;
 
+/// 转换当前系统剪贴板并请求无焦点成功提示；历史记录由正常监听链路采集。
+#[tauri::command]
+pub async fn convert_current_clipboard_to_plain_text(
+    app: AppHandle,
+) -> Result<crate::clipboard::PlainTextConversionResult> {
+    let language = crate::i18n::current_language(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::clipboard::convert_current_clipboard_with_feedback(&app)
+    })
+    .await
+    .map_err(|_| {
+        crate::i18n::plain_text_conversion::error(language, "conversion unavailable", None)
+    })?
+}
+
+/// 仅预览用户输入的样例与规则草稿，不读取或写入系统剪贴板。
+#[tauri::command]
+pub async fn preview_plain_text_conversion(
+    app: AppHandle,
+    input: String,
+    input_format: crate::clipboard::PlainTextInputFormat,
+    config: crate::settings::PlainTextConversionSettings,
+) -> Result<crate::clipboard::PlainTextPreview> {
+    let language = crate::i18n::current_language(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::clipboard::preview_plain_text_conversion(input, input_format, config, language)
+    })
+    .await
+    .map_err(|_| crate::i18n::plain_text_conversion::error(language, "preview unavailable", None))?
+}
+
 /// `read_clipboard` 的返回：入库后的记录 + 是否命中去重（前端据此决定提示/滚动行为）。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

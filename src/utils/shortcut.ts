@@ -136,7 +136,7 @@ export const formatShortcutDisplay = (
  * 归一化快捷键字面量，供冲突检测忽略大小写和多余空白。
  */
 export const normalizeShortcutValue = (value: string) => {
-  return value
+  const parts = value
     .split("+")
     .map((key) => {
       return key.trim().toLowerCase();
@@ -144,7 +144,41 @@ export const normalizeShortcutValue = (value: string) => {
     .filter((key) => {
       return key !== "";
     })
-    .join("+");
+    .map((key) => {
+      if (["cmdorctrl", "commandorcontrol", "mod"].includes(key))
+        return isMac ? "command" : "control";
+      if (["ctrl", "control"].includes(key)) return "control";
+      if (["meta", "cmd", "command", "super"].includes(key)) return "command";
+      if (key === "option") return "alt";
+      if (key === "esc") return "escape";
+      if (key === "return") return "enter";
+      return key;
+    });
+
+  return parts.sort().join("+");
+};
+
+/** Match every modifier exactly, preventing old one-modifier actions from stealing remapped keys. */
+export const matchesShortcut = (event: KeyboardEvent, binding: string) => {
+  if (!binding || event.isComposing) return false;
+
+  const parts = normalizeShortcutValue(binding).split("+");
+  const resolvedKey = resolveShortcutEventKey(event)?.shortcutKey;
+  const key = (
+    resolvedKey ?? (event.key === " " ? "space" : event.key)
+  ).toLowerCase();
+  const primaryKeys = parts.filter((part) => {
+    return !["control", "shift", "alt", "command"].includes(part);
+  });
+
+  return (
+    primaryKeys.length === 1 &&
+    primaryKeys[0] === key &&
+    event.ctrlKey === parts.includes("control") &&
+    event.shiftKey === parts.includes("shift") &&
+    event.altKey === parts.includes("alt") &&
+    event.metaKey === parts.includes("command")
+  );
 };
 
 /**
@@ -169,6 +203,10 @@ export const resolveShortcutEventKey = (
       eventKey: key,
       shortcutKey: MODIFIER_SHORTCUT_KEY[key],
     };
+  }
+
+  if (key.length === 1 && /^[a-z0-9;./\\[\]\-=`,']$/i.test(key)) {
+    return { eventKey: key, shortcutKey: key.toUpperCase() };
   }
 
   if (/^Key[A-Z]$/.test(code)) {
@@ -206,6 +244,7 @@ export const resolveShortcutEventKey = (
  */
 export const buildShortcutFromEvent = (
   event: KeyboardEvent | ReactKeyboardEvent,
+  allowBareKey = false,
 ) => {
   const primaryKey = resolveShortcutEventKey(event);
 
@@ -222,7 +261,7 @@ export const buildShortcutFromEvent = (
     return shortcutKeys.join("+");
   }
 
-  if (modifiers.length === 0) return null;
+  if (modifiers.length === 0 && !allowBareKey) return null;
 
   return shortcutKeys.join("+");
 };

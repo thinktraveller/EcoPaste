@@ -1,6 +1,7 @@
 import { useEventListener, useLatest } from "ahooks";
 import { TAURI_EVENT } from "@/constants/events";
 import { isWinClipboardWindow } from "@/utils/is";
+import { isShortcutModifierEventKey } from "@/utils/shortcut";
 import { useTauriListen } from "./useTauriListen";
 
 type KeyboardEventType = "keydown" | "keyup";
@@ -24,6 +25,9 @@ interface NavEventPayload {
   key: string;
   ctrlKey?: boolean;
   shiftKey?: boolean;
+  altKey?: boolean;
+  metaKey?: boolean;
+  repeat?: boolean;
 }
 
 /**
@@ -40,12 +44,18 @@ export const useKeyboardEvent = (
   const handlerRef = useLatest(handler);
 
   const handleBrowserEvent = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.isComposing) return;
+
+    const nativeEditable = findEditableElement(event.target);
+    if (nativeEditable && !shouldHandoffEditableKeyboard(nativeEditable, event))
+      return;
+
     if (isWindowsClipboardWindow) {
       const editableTarget = findEditableElement(event.target);
       if (editableTarget) {
         if (!shouldHandoffEditableKeyboard(editableTarget, event)) return;
 
-        editableTarget.blur();
+        if (!isShortcutModifierEventKey(event.key)) editableTarget.blur();
       }
     }
 
@@ -94,6 +104,7 @@ function shouldHandoffEditableKeyboard(
   target: HTMLElement,
   event: KeyboardEvent,
 ) {
+  if (isShortcutModifierEventKey(event.key)) return true;
   if (event.type !== "keydown") return false;
   if (!target.closest(EDITABLE_GLOBAL_KEYBOARD_SELECTOR)) return false;
 

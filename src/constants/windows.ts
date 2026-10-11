@@ -14,6 +14,7 @@ export const WINDOW_LABEL = {
    * Custom context submenu window on Windows.
    */
   CONTEXT_SUBMENU: "context-submenu",
+  CONVERSION_FEEDBACK: "conversion-feedback",
   /**
    * 首次启动引导窗口。
    */

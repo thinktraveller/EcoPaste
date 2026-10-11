@@ -1,3 +1,4 @@
+import { useUnmount } from "ahooks";
 import { Input, type InputRef } from "antd";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -28,6 +29,7 @@ export interface ShortcutRecorderConflict {
 }
 
 interface ShortcutRecorderProps {
+  scope?: "global" | "window";
   className?: string;
   conflicts?: readonly ShortcutRecorderConflict[];
   disabled?: boolean;
@@ -42,6 +44,7 @@ interface ShortcutRecorderProps {
  */
 const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
   const {
+    scope = "global",
     className,
     conflicts = [],
     disabled = false,
@@ -52,9 +55,11 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
   const { t } = useTranslation("common");
 
   const inputRef = useRef<InputRef>(null);
+  const disposedRef = useRef(false);
   const committedValueRef = useRef(value);
   const draftValueRef = useRef(value);
   const recordingRef = useRef(false);
+  const recordingEpochRef = useRef(0);
   const shortcutsSuspendedRef = useRef(false);
   const suspendPromiseRef = useRef<Promise<boolean> | null>(null);
   const [draft, setDraft] = useState(value);
@@ -69,16 +74,11 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
     setDraft(value);
   }, [recording, value]);
 
-  useEffect(() => {
-    return () => {
-      if (!shortcutsSuspendedRef.current && !suspendPromiseRef.current) return;
-
-      void resumeShortcutsAfterUnmount(
-        suspendPromiseRef.current,
-        shortcutsSuspendedRef.current,
-      );
-    };
-  }, []);
+  useUnmount(() => {
+    disposedRef.current = true;
+    recordingRef.current = false;
+    void resumeShortcutsAfterUnmount();
+  });
 
   const displayValue = formatRecordedShortcut(draft);
   const showClearIcon = draft !== "" && !recording && !disabled;
@@ -94,9 +94,28 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
    */
   const commit = async (nextValue: string) => {
     if (nextValue === committedValueRef.current) return;
+    try {
+      await onChange?.(nextValue);
+      committedValueRef.current = nextValue;
+      return true;
+    } catch (error) {
+      committedValueRef.current = value;
+      if (!disposedRef.current) setDraftValue(value);
+      log.error("shortcut commit rejected", error);
+      return false;
+    }
+  };
 
-    committedValueRef.current = nextValue;
-    await onChange?.(nextValue);
+  const isValid = (nextValue: string) => {
+    if (scope === "window") {
+      return (
+        nextValue !== "" &&
+        !["Control", "Shift", "Alt", "Command"].includes(nextValue) &&
+        (nextValue.includes("+") ||
+          /^(Enter|Backspace|Delete|F([1-9]|1[0-2]))$/.test(nextValue))
+      );
+    }
+    return isRecordableShortcut(nextValue);
   };
 
   /**
@@ -111,6 +130,7 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
    * 同步更新录制态 ref 和 React state，避免最后一次 keyup 清掉已提交结果。
    */
   const setRecordingState = (nextRecording: boolean) => {
+    if (recordingRef.current !== nextRecording) recordingEpochRef.current += 1;
     recordingRef.current = nextRecording;
     setRecording(nextRecording);
   };
@@ -157,6 +177,11 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
       return true;
     } catch (error) {
       log.error("suspend global shortcuts for recorder failed", error);
+      if (!disposedRef.current) {
+        setRecordingState(false);
+        setDraftValue(committedValueRef.current);
+        inputRef.current?.blur();
+      }
     }
 
     suspendPromiseRef.current = null;
@@ -171,11 +196,23 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
     if (suspendPromiseRef.current) {
       await suspendPromiseRef.current;
     }
+    if (recordingRef.current && !disposedRef.current) return;
     if (!shortcutsSuspendedRef.current) return;
 
     shortcutsSuspendedRef.current = false;
     await resumeGlobalShortcuts();
   };
+
+  /**
+   * 卸载与失焦共用同一 ref 配对释放，避免延迟注销被两个清理入口重复恢复。
+   */
+  async function resumeShortcutsAfterUnmount() {
+    try {
+      await resumeShortcuts();
+    } catch (error) {
+      log.error("resume global shortcuts after recorder unmount failed", error);
+    }
+  }
 
   /**
    * 进入录入态时立即触发注销；不阻塞 focus，但按键处理前会等待它完成。
@@ -195,7 +232,7 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
     setRecordingState(false);
     await commit("");
     await resumeShortcuts();
-    inputRef.current?.blur();
+    if (!recordingRef.current && !disposedRef.current) inputRef.current?.blur();
   };
 
   /**
@@ -217,7 +254,7 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
     if (!recordingRef.current) return;
 
     const draftValue = draftValueRef.current;
-    const nextValue = isRecordableShortcut(draftValue) ? draftValue : value;
+    const nextValue = isValid(draftValue) ? draftValue : value;
     const conflict = findShortcutConflict(nextValue);
     if (conflict) {
       resetConflictedDraft(conflict, nextValue);
@@ -238,24 +275,38 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
    * 捕获冒泡上来的键盘事件，生成可交给 Tauri 注册的快捷键字面量。
    */
   const handleKeyDown = async (event: KeyboardEvent<HTMLFieldSetElement>) => {
-    if (disabled) return;
+    if (disabled || !recordingRef.current) return;
 
     event.preventDefault();
     event.stopPropagation();
+
+    if (event.repeat || event.nativeEvent.isComposing) return;
+
+    const recordingEpoch = recordingEpochRef.current;
+    if (event.key === "Escape") {
+      setRecordingState(false);
+      setDraftValue(value);
+      await resumeShortcuts();
+      if (!recordingRef.current && !disposedRef.current)
+        inputRef.current?.blur();
+
+      return;
+    }
 
     if (suspendPromiseRef.current) {
       await suspendPromiseRef.current;
     }
 
-    if (isClearKey(event)) {
-      await clearShortcut();
-
+    if (
+      disposedRef.current ||
+      !recordingRef.current ||
+      recordingEpoch !== recordingEpochRef.current ||
+      !shortcutsSuspendedRef.current
+    )
       return;
-    }
 
-    if (event.key === "Escape") {
-      await resumeShortcuts();
-      inputRef.current?.blur();
+    if (scope === "global" && isClearKey(event)) {
+      await clearShortcut();
 
       return;
     }
@@ -265,9 +316,9 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
 
     setDraftValue(previewValue);
 
-    const nextValue = buildShortcutFromEvent(event);
+    const nextValue = buildShortcutFromEvent(event, scope === "window");
     if (!nextValue) return;
-    if (!isRecordableShortcut(nextValue)) return;
+    if (!isValid(nextValue)) return;
     const conflict = findShortcutConflict(nextValue);
     if (conflict) {
       resetConflictedDraft(conflict, nextValue);
@@ -278,7 +329,7 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
     setRecordingState(false);
     await commit(nextValue);
     await resumeShortcuts();
-    inputRef.current?.blur();
+    if (!recordingRef.current && !disposedRef.current) inputRef.current?.blur();
   };
 
   /**
@@ -371,7 +422,7 @@ const ShortcutRecorder: FC<ShortcutRecorderProps> = (props) => {
 export default ShortcutRecorder;
 
 /**
- * 只有单独按删除键才视为清空；带修饰键时仍允许录入 Ctrl+Delete 等组合。
+ * 全局录入用裸删除键清空；窗口录入允许绑定裸删除键，并通过按钮清空。
  */
 function isClearKey(event: KeyboardEvent<HTMLFieldSetElement>) {
   if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
@@ -387,22 +438,6 @@ function isClearKey(event: KeyboardEvent<HTMLFieldSetElement>) {
 function preventClearMouseDown(event: MouseEvent<HTMLButtonElement>) {
   event.preventDefault();
   event.stopPropagation();
-}
-
-/**
- * 组件卸载时释放可能仍在路上的暂停请求，避免后端暂停计数泄漏。
- */
-async function resumeShortcutsAfterUnmount(
-  suspendPromise: Promise<boolean> | null,
-  suspended: boolean,
-) {
-  let shouldResume = suspended;
-  if (suspendPromise) {
-    shouldResume = await suspendPromise;
-  }
-  if (!shouldResume) return;
-
-  await resumeGlobalShortcuts();
 }
 
 /**

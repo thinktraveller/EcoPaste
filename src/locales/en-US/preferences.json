@@ -49,6 +49,64 @@
       "plain": "Plain backup recognized."
     }
   },
+  "plainTextConversion": {
+    "addRule": "Add rule",
+    "builtinTitle": "Built-in rules",
+    "collapseBlankLines": "Collapse consecutive blank lines",
+    "collapseHint": "Applies only while extracting body text. Code content and ordinary text with no detected markup remain unchanged.",
+    "description": "Adjust how Markdown and HTML become plain text and add replacements in order. Saved rules apply only when you actively convert the current clipboard.",
+    "emptyRules": "No custom replacement rules yet.",
+    "enabled": "Enabled",
+    "errorFallback": "The operation could not be completed. Check the rules and try again.",
+    "htmlInput": "HTML",
+    "imageStyle": "Image descriptions",
+    "inputFormat": "Example format",
+    "linkStyle": "Links",
+    "listStyle": "Lists",
+    "literal": "Literal text",
+    "mode": "Match mode",
+    "moveDown": "Move down",
+    "moveUp": "Move up",
+    "newRuleName": "Replacement rule {{index}}",
+    "options": {
+      "alt": "Keep description",
+      "omit": "Omit",
+      "readableMarkers": "Readable list markers",
+      "space": "Single space",
+      "status": "Keep checked status",
+      "tab": "Tab",
+      "textOnly": "Text only",
+      "title": "Title only",
+      "titleAndUrl": "Title and URL",
+      "url": "URL only"
+    },
+    "pattern": "Find",
+    "patternHint": "Spaces and real line breaks are preserved. The search pattern cannot be empty.",
+    "previewAction": "Preview",
+    "previewEmpty": "The preview result will appear here.",
+    "previewHint": "Enter an example manually to preview the unsaved rule draft. This does not read or change the clipboard or add history records.",
+    "previewInput": "Example input",
+    "previewOutput": "Plain text output",
+    "previewTitle": "Example preview",
+    "previewUnchanged": "The output is identical to the input.",
+    "recoveryHint": "The invalid configuration is isolated and default rules are used temporarily. Its original content is preserved. Saving corrected rules or saved defaults replaces it.",
+    "recoveryRaw": "Preserved original configuration",
+    "recoveryTitle": "Stored rules need repair",
+    "regex": "Regular expression",
+    "regexHint": "Regex replacements support $1 and ${name} capture references; $$ inserts $. Rust regex does not support look-around or backreferences inside patterns.",
+    "replacement": "Replace with",
+    "replacementHint": "Leave empty to delete matches. In literal mode, $1 and \\n are ordinary text; enter real line breaks directly.",
+    "restoreDefaults": "Restore default rules",
+    "ruleName": "Rule name",
+    "rulesHint": "Rules run in list order on the entire extracted text, including ordinary text and code. They apply only to active conversion. Up to 32 rules, including disabled ones.",
+    "rulesTitle": "Custom replacements",
+    "ruleTitle": "Rule {{index}}",
+    "saved": "Formatting rules saved",
+    "tableSeparator": "Table column separator",
+    "taskStyle": "Task lists",
+    "textInput": "Text / Markdown",
+    "title": "Formatting rules"
+  },
   "schema": {
     "captureKinds": {
       "files": "Files and Folders",
@@ -92,6 +150,9 @@
       },
       "control": {
         "title": "System Entry"
+      },
+      "conversion": {
+        "title": "Formatting conversion"
       },
       "copy": {
         "title": "Copy Feedback"
@@ -137,6 +198,10 @@
       },
       "window": {
         "title": "Clipboard Window"
+      },
+      "windowShortcuts": {
+        "description": "Customize common list actions. Navigation, preview, and numbered paste retain their defaults.",
+        "title": "Clipboard window shortcuts"
       }
     },
     "settings": {
@@ -309,6 +374,13 @@
             "description": "Show the EcoPaste icon in the system tray.",
             "title": "System Tray Icon"
           }
+        }
+      },
+      "conversion": {
+        "rules": {
+          "controlLabel": "Manage",
+          "description": "Adjust Markdown and HTML conversion and manage literal or regex replacement rules.",
+          "title": "Formatting rules"
         }
       },
       "copy": {
@@ -527,6 +599,11 @@
         }
       },
       "shortcuts": {
+        "convertToPlainText": {
+          "description": "Convert current clipboard Markdown, HTML, or rich text to plain text, preserving body text and code without pasting. Images, files, and RTF-only content remain unchanged.",
+          "placeholder": "Record global shortcut",
+          "title": "Convert current clipboard to plain text"
+        },
         "openClipboard": {
           "description": "Open or hide the clipboard window.",
           "placeholder": "Alt+C",
@@ -632,6 +709,53 @@
           },
           "title": "Select Range on Open"
         }
+      },
+      "windowShortcuts": {
+        "copy": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Copy selected item"
+        },
+        "delete": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Delete selected item"
+        },
+        "deleteForward": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Delete selected item (alternate)"
+        },
+        "favorite": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Favorite selected item"
+        },
+        "note": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Edit note"
+        },
+        "open": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Open selected item"
+        },
+        "paste": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Paste selected item"
+        },
+        "pastePlain": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Paste selected item as plain text"
+        },
+        "pin": {
+          "description": "Active only in the clipboard window. Clear to disable.",
+          "placeholder": "Record window shortcut",
+          "title": "Pin selected item"
+        }
       }
     },
     "tabs": {
@@ -661,6 +785,14 @@
   "search": {
     "empty": "No matching settings",
     "placeholder": "Search settings"
+  },
+  "shortcutSettings": {
+    "active": "Registered in the system",
+    "failed": "Inactive: {{reason}}",
+    "paused": "Paused while recording; registration resumes afterwards",
+    "reserved": "Reserved window action",
+    "restore": "Restore default",
+    "restoreWindow": "Restore all window defaults"
   },
   "status": {
     "alwaysOn": "Default",

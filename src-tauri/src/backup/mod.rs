@@ -262,6 +262,16 @@ pub async fn import_history_backup(
     let payload = read_backup_payload(&path, input.password.as_deref())?;
     let temp = extract_payload_zip(&payload)?;
     validate_extracted_payload(temp.path())?;
+    let settings_path = temp.path().join(CONFIG_ARCHIVE_DIR).join(SETTINGS_FILENAME);
+    let store = app.state::<crate::settings::SettingsStore>();
+    match options.strategy {
+        BackupImportStrategy::Merge => {
+            store.prepare_update(read_json_file(&settings_path)?)?;
+        }
+        BackupImportStrategy::Overwrite => {
+            store.prepare_from_file(&settings_path)?;
+        }
+    }
 
     match options.strategy {
         BackupImportStrategy::Merge => {
@@ -973,6 +983,9 @@ async fn merge_import(
     let next = app
         .state::<crate::settings::SettingsStore>()
         .update(patch)?;
+    if let Err(err) = crate::shortcut::apply(app, &next.shortcuts) {
+        log::warn!("shortcut registration after merged settings import incomplete: {err}");
+    }
     emit_settings_updated(app, &next);
 
     Ok(ImportHistoryBackupResult {
@@ -1017,6 +1030,9 @@ async fn overwrite_import(
     let next = app
         .state::<crate::settings::SettingsStore>()
         .replace_from_file(&settings_path)?;
+    if let Err(err) = crate::shortcut::apply(app, &next.shortcuts) {
+        log::warn!("shortcut registration after replaced settings import incomplete: {err}");
+    }
     emit_settings_updated(app, &next);
 
     Ok(ImportHistoryBackupResult {

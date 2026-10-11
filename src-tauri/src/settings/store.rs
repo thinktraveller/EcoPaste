@@ -7,23 +7,43 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, MutexGuard, RwLock};
 
 use anyhow::Context;
+use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::core::{AppError, Result};
 
 use super::model::{
-    Language, Settings, WINDOW_OPEN_GROUP_PREFIX, WINDOW_OPEN_SELECTION_ALL,
-    WINDOW_OPEN_SELECTION_PRESERVE,
+    Language, PlainTextConversionSettings, Settings, WINDOW_OPEN_GROUP_PREFIX,
+    WINDOW_OPEN_SELECTION_ALL, WINDOW_OPEN_SELECTION_PRESERVE,
 };
 
 const FILENAME: &str = "settings.json";
+const CONVERSION_SECTION: &str = "plainTextConversion";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlainTextConversionEditor {
+    pub config: PlainTextConversionSettings,
+    pub recovery: Option<serde_json::Value>,
+    pub diagnostics: Vec<String>,
+    pub revision: String,
+}
+
+struct LoadedSettings {
+    settings: Settings,
+    shortcut_diagnostics: Vec<&'static str>,
+    conversion_recovery: Option<serde_json::Value>,
+}
 
 pub struct SettingsStore {
     path: RwLock<PathBuf>,
     current: RwLock<Settings>,
+    operation: Mutex<()>,
+    shortcut_diagnostics: RwLock<Vec<&'static str>>,
+    conversion_recovery: RwLock<Option<serde_json::Value>>,
 }
 
 impl SettingsStore {
@@ -33,7 +53,7 @@ impl SettingsStore {
 
         let path = dir.join(FILENAME);
 
-        let current = match load_from_disk(&path) {
+        let loaded = match load_from_disk(&path) {
             Some(settings) => settings,
             None => {
                 // 真·首次启动：用系统 locale 推导默认语言并落盘，之后所有读取都走常规分支。
@@ -41,14 +61,21 @@ impl SettingsStore {
                 if let Err(err) = write_atomic(&path, &settings) {
                     log::warn!("persist first-run settings failed: {err}");
                 }
-                settings
+                LoadedSettings {
+                    settings,
+                    shortcut_diagnostics: Vec::new(),
+                    conversion_recovery: None,
+                }
             }
         };
         log::info!("settings store ready at {path:?}");
 
         Ok(Self {
             path: RwLock::new(path),
-            current: RwLock::new(current),
+            current: RwLock::new(loaded.settings),
+            operation: Mutex::new(()),
+            shortcut_diagnostics: RwLock::new(loaded.shortcut_diagnostics),
+            conversion_recovery: RwLock::new(loaded.conversion_recovery),
         })
     }
 
@@ -56,78 +83,277 @@ impl SettingsStore {
         self.current.read().expect("settings poisoned").clone()
     }
 
+    /// Return an editable original while keeping invalid loaded rules out of runtime snapshots.
+    pub fn plain_text_conversion_editor(&self) -> Result<PlainTextConversionEditor> {
+        let _operation = self.begin_update();
+        let settings = self.snapshot();
+        let recovery = self.conversion_recovery();
+        let revision =
+            conversion_revision(&settings.clipboard.plain_text_conversion, recovery.as_ref())?;
+        let mut config = settings.clipboard.plain_text_conversion;
+        let mut diagnostics = Vec::new();
+
+        if let Some(raw) = &recovery {
+            diagnostics.push(
+                crate::i18n::conversion_settings::recovered(settings.appearance.language).into(),
+            );
+            match serde_json::from_value::<PlainTextConversionSettings>(raw.clone()) {
+                Ok(original) => {
+                    if let Err(err) = crate::clipboard::validate_plain_text_conversion(
+                        &original,
+                        settings.appearance.language,
+                    ) {
+                        diagnostics.push(err.to_string());
+                    }
+                    config = original;
+                }
+                Err(_) => diagnostics.push(
+                    crate::i18n::conversion_settings::malformed(settings.appearance.language)
+                        .into(),
+                ),
+            }
+        }
+
+        Ok(PlainTextConversionEditor {
+            config,
+            recovery,
+            diagnostics,
+            revision,
+        })
+    }
+
+    /// Compare the section revision under the operation gate and atomically acknowledge a repair.
+    pub fn save_plain_text_conversion(
+        &self,
+        config: PlainTextConversionSettings,
+        expected_revision: &str,
+    ) -> Result<Settings> {
+        let _operation = self.begin_update();
+        let mut next = self.snapshot();
+        let recovery = self.conversion_recovery();
+        let revision =
+            conversion_revision(&next.clipboard.plain_text_conversion, recovery.as_ref())?;
+        if revision != expected_revision {
+            return Err(AppError::Other(anyhow::anyhow!(
+                crate::i18n::conversion_settings::conflict(next.appearance.language)
+            )));
+        }
+
+        next.clipboard.plain_text_conversion = config;
+        self.commit_with_conversion_intent(next, true)
+    }
+
+    /// Return session-only disabled binding diagnostics; never persist them as settings.
+    pub fn shortcut_diagnostics(&self) -> Vec<&'static str> {
+        self.shortcut_diagnostics
+            .read()
+            .expect("shortcut diagnostics poisoned")
+            .clone()
+    }
+
+    /// Clear an acknowledged load warning only after its explicit setting write succeeds.
+    pub fn acknowledge_shortcut_patch(&self, patch: &serde_json::Value) {
+        let Some(shortcuts) = patch.get("shortcuts") else {
+            return;
+        };
+        self.shortcut_diagnostics
+            .write()
+            .expect("shortcut diagnostics poisoned")
+            .retain(|action| {
+                if *action == crate::shortcut::ACTION_CONVERT_TO_PLAIN_TEXT {
+                    shortcuts.get("convertToPlainText").is_none()
+                } else {
+                    shortcuts
+                        .get("windowActions")
+                        .and_then(|value| value.get(*action))
+                        .is_none()
+                }
+            });
+    }
+
     /// 恢复默认设置并落盘，返回新的完整快照。
     pub fn reset(&self) -> Result<Settings> {
+        let _operation = self.begin_update();
         let next = default_settings_with_system_locale();
 
         let path = self.path();
         write_atomic(&path, &next)?;
         *self.current.write().expect("settings poisoned") = next.clone();
+        self.shortcut_diagnostics
+            .write()
+            .expect("shortcut diagnostics poisoned")
+            .clear();
+        self.clear_conversion_recovery();
         Ok(next)
     }
 
     /// 用 JSON patch 深度合并到当前设置，落盘后返回新快照。
     /// patch 必须是 object；非 object 视为「整个替换」语义不友好，直接报错。
     pub fn update(&self, patch: serde_json::Value) -> Result<Settings> {
+        let _operation = self.begin_update();
+        let next = self.prepare_update(patch.clone())?;
+        let next = self.commit_snapshot_with_patch(next, &patch)?;
+        self.acknowledge_shortcut_patch(&patch);
+        Ok(next)
+    }
+
+    /// Validate a candidate before any native registration or persisted state changes.
+    pub fn prepare_update(&self, patch: serde_json::Value) -> Result<Settings> {
+        super::shortcuts::validate_shortcut_json(&patch, self.snapshot().appearance.language)?;
         if !patch.is_object() {
             return Err(AppError::Other(anyhow::anyhow!(
                 "settings patch must be a JSON object"
             )));
         }
 
-        let mut guard = self.current.write().expect("settings poisoned");
+        let guard = self.current.read().expect("settings poisoned");
 
         let mut merged = serde_json::to_value(&*guard)
             .context("failed to serialize current settings for merge")?;
         deep_merge(&mut merged, patch);
 
+        validate_conversion_json(&merged, guard.appearance.language)?;
         let next: Settings = serde_json::from_value(merged)
             .map_err(|err| AppError::Other(anyhow::anyhow!("invalid settings patch: {err}")))?;
 
         validate_settings(&next)?;
 
-        let path = self.path();
-        write_atomic(&path, &next)?;
-        *guard = next.clone();
+        Ok(next)
+    }
+
+    /// Serialize settings read-modify-write operations, including prepared native registration.
+    pub fn begin_update(&self) -> MutexGuard<'_, ()> {
+        self.operation.lock().expect("settings operation poisoned")
+    }
+
+    /// Commit an already validated snapshot after native side effects are prepared.
+    pub fn commit_snapshot(&self, next: Settings) -> Result<Settings> {
+        self.commit_with_conversion_intent(next, false)
+    }
+
+    /// Preserve an isolated damaged section unless this successful write explicitly repairs it.
+    pub fn commit_snapshot_with_patch(
+        &self,
+        next: Settings,
+        patch: &serde_json::Value,
+    ) -> Result<Settings> {
+        if touches_conversion(patch) {
+            return self.commit_with_conversion_intent(next, true);
+        }
+        self.commit_snapshot(next)
+    }
+
+    fn commit_with_conversion_intent(
+        &self,
+        next: Settings,
+        repairs_conversion: bool,
+    ) -> Result<Settings> {
+        validate_settings(&next)?;
+        let recovery = if repairs_conversion {
+            None
+        } else {
+            self.conversion_recovery()
+        };
+        write_atomic_preserving_conversion(&self.path(), &next, recovery.as_ref())?;
+        *self.current.write().expect("settings poisoned") = next.clone();
+        if repairs_conversion {
+            self.clear_conversion_recovery();
+        }
+        self.shortcut_diagnostics
+            .write()
+            .expect("shortcut diagnostics poisoned")
+            .retain(|action| {
+                if *action == crate::shortcut::ACTION_CONVERT_TO_PLAIN_TEXT {
+                    next.shortcuts.convert_to_plain_text.is_empty()
+                } else {
+                    next.shortcuts
+                        .window_actions
+                        .get(*action)
+                        .is_none_or(String::is_empty)
+                }
+            });
         Ok(next)
     }
 
     /// 用完整设置文件替换当前设置；覆盖导入专用。
     pub fn replace_from_file(&self, path: &Path) -> Result<Settings> {
-        let content =
-            fs::read_to_string(path).with_context(|| format!("failed to read {path:?}"))?;
-        let next: Settings = serde_json::from_str(&content)
-            .map_err(|err| AppError::Other(anyhow::anyhow!("invalid settings file: {err}")))?;
-
-        validate_settings(&next)?;
+        let _operation = self.begin_update();
+        let next = self.prepare_from_file(path)?;
 
         let path = self.path();
         write_atomic(&path, &next)?;
         *self.current.write().expect("settings poisoned") = next.clone();
+        self.shortcut_diagnostics
+            .write()
+            .expect("shortcut diagnostics poisoned")
+            .clear();
+        self.clear_conversion_recovery();
+        Ok(next)
+    }
+
+    /// Validate a complete replacement before a backup import changes live history or resources.
+    pub fn prepare_from_file(&self, path: &Path) -> Result<Settings> {
+        let content =
+            fs::read_to_string(path).with_context(|| format!("failed to read {path:?}"))?;
+        let raw: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|err| AppError::Other(anyhow::anyhow!("invalid settings file: {err}")))?;
+        super::shortcuts::validate_shortcut_json(&raw, self.snapshot().appearance.language)?;
+        validate_conversion_json(&raw, self.snapshot().appearance.language)?;
+        let next: Settings = serde_json::from_str(&content)
+            .map_err(|err| AppError::Other(anyhow::anyhow!("invalid settings file: {err}")))?;
+
+        validate_settings(&next)?;
         Ok(next)
     }
 
     /// 数据目录热切换后重新绑定设置文件，并把新路径里的设置加载进内存。
     pub fn rebase(&self, app: &AppHandle) -> Result<Settings> {
+        let _operation = self.begin_update();
         let dir = crate::core::paths::config_dir(app)?;
         fs::create_dir_all(&dir).with_context(|| format!("failed to create dir at {dir:?}"))?;
         let path = dir.join(FILENAME);
-        let current = match load_from_disk(&path) {
+        let loaded = match load_from_disk(&path) {
             Some(settings) => settings,
             None => {
                 let settings = default_settings_with_system_locale();
                 write_atomic(&path, &settings)?;
-                settings
+                LoadedSettings {
+                    settings,
+                    shortcut_diagnostics: Vec::new(),
+                    conversion_recovery: None,
+                }
             }
         };
 
         *self.path.write().expect("settings path poisoned") = path;
-        *self.current.write().expect("settings poisoned") = current.clone();
-        Ok(current)
+        *self.current.write().expect("settings poisoned") = loaded.settings.clone();
+        *self
+            .shortcut_diagnostics
+            .write()
+            .expect("shortcut diagnostics poisoned") = loaded.shortcut_diagnostics;
+        *self
+            .conversion_recovery
+            .write()
+            .expect("conversion recovery poisoned") = loaded.conversion_recovery;
+        Ok(loaded.settings)
     }
 
     fn path(&self) -> PathBuf {
         self.path.read().expect("settings path poisoned").clone()
+    }
+
+    fn conversion_recovery(&self) -> Option<serde_json::Value> {
+        self.conversion_recovery
+            .read()
+            .expect("conversion recovery poisoned")
+            .clone()
+    }
+
+    fn clear_conversion_recovery(&self) {
+        *self
+            .conversion_recovery
+            .write()
+            .expect("conversion recovery poisoned") = None;
     }
 }
 
@@ -147,26 +373,69 @@ fn default_settings_with_system_locale() -> Settings {
 /// 返回 `None` 表示主文件不存在（首次启动），调用方据此走「初始化默认」分支；
 /// 读取过程中遇到 IO/解析错误会打 warn，并返回 `Settings::default()` 包装在 `Some` 里——
 /// 这条路径表示「文件存在但坏了」，不要当成首次启动覆盖系统 locale。
-fn load_from_disk(path: &Path) -> Option<Settings> {
+fn load_from_disk(path: &Path) -> Option<LoadedSettings> {
     if !path.exists() {
         return None;
     }
 
     match fs::read_to_string(path).and_then(|content| {
-        serde_json::from_str::<Settings>(&content)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+        let mut raw: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        let shortcut_diagnostics = super::shortcuts::malformed_loaded_shortcuts(&raw);
+        let original_conversion = raw.get_mut("clipboard")
+            .and_then(serde_json::Value::as_object_mut)
+            .and_then(|clipboard| clipboard.remove(CONVERSION_SECTION));
+        let mut settings = serde_json::from_value::<Settings>(raw)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        let conversion_recovery = original_conversion.and_then(|original| {
+            match serde_json::from_value::<PlainTextConversionSettings>(original.clone()) {
+                Ok(config) if crate::clipboard::validate_plain_text_conversion(&config, settings.appearance.language).is_ok() => {
+                    settings.clipboard.plain_text_conversion = config;
+                    None
+                }
+                _ => {
+                    log::warn!("invalid loaded plain-text conversion settings isolated; original section preserved");
+                    Some(original)
+                }
+            }
+        });
+        Ok(LoadedSettings { settings, shortcut_diagnostics, conversion_recovery })
     }) {
-        Ok(settings) => Some(settings),
+        Ok(mut loaded) => {
+            loaded.shortcut_diagnostics.extend(super::shortcuts::sanitize_loaded_shortcuts(
+                &mut loaded.settings.shortcuts,
+            ));
+            loaded.shortcut_diagnostics.sort_unstable();
+            loaded.shortcut_diagnostics.dedup();
+            Some(loaded)
+        }
         Err(err) => {
             log::warn!("settings file {path:?} unreadable, using defaults: {err}");
-            Some(Settings::default())
+            Some(LoadedSettings {
+                settings: Settings::default(),
+                shortcut_diagnostics: Vec::new(),
+                conversion_recovery: None,
+            })
         }
     }
 }
 
 /// 写入策略：把新内容写到 tmp 后 rename 成主文件；rename 在同一文件系统下是原子的。
 fn write_atomic(path: &Path, settings: &Settings) -> Result<()> {
-    let json = serde_json::to_string_pretty(settings).context("failed to serialize settings")?;
+    write_atomic_preserving_conversion(path, settings, None)
+}
+
+/// Keep the exact isolated JSON subtree when another setting is saved during recovery.
+fn write_atomic_preserving_conversion(
+    path: &Path,
+    settings: &Settings,
+    recovery: Option<&serde_json::Value>,
+) -> Result<()> {
+    let mut raw = serde_json::to_value(settings).context("failed to serialize settings")?;
+    if let Some(original) = recovery {
+        raw["clipboard"][CONVERSION_SECTION] = original.clone();
+    }
+    let json = serde_json::to_string_pretty(&raw).context("failed to serialize settings")?;
 
     let tmp = path.with_extension("json.tmp");
     {
@@ -185,20 +454,66 @@ fn write_atomic(path: &Path, settings: &Settings) -> Result<()> {
 fn validate_settings(settings: &Settings) -> Result<()> {
     validate_window_open_group(&settings.clipboard.window.select_group_on_open)?;
 
-    let open_clipboard = normalize_shortcut_value(&settings.shortcuts.open_clipboard);
-    let open_preference = normalize_shortcut_value(&settings.shortcuts.open_preference);
+    super::shortcuts::validate_shortcuts(&settings.shortcuts, settings.appearance.language)?;
+    crate::clipboard::validate_plain_text_conversion(
+        &settings.clipboard.plain_text_conversion,
+        settings.appearance.language,
+    )
+}
 
-    if open_clipboard.is_empty() || open_preference.is_empty() {
+/// Validate this additive subtree before whole-settings deserialization can expose its raw data.
+fn validate_conversion_json(raw: &serde_json::Value, language: Language) -> Result<()> {
+    let Some(section) = raw
+        .get("clipboard")
+        .and_then(|clipboard| clipboard.get(CONVERSION_SECTION))
+    else {
         return Ok(());
-    }
+    };
+    let config: PlainTextConversionSettings =
+        serde_json::from_value(section.clone()).map_err(|_| {
+            AppError::Other(anyhow::anyhow!(
+                crate::i18n::conversion_settings::malformed(language)
+            ))
+        })?;
+    crate::clipboard::validate_plain_text_conversion(&config, language)
+}
 
-    if open_clipboard == open_preference {
-        return Err(AppError::Other(anyhow::anyhow!(
-            "global shortcuts must be unique"
-        )));
-    }
+fn touches_conversion(patch: &serde_json::Value) -> bool {
+    patch
+        .get("clipboard")
+        .and_then(|clipboard| clipboard.get(CONVERSION_SECTION))
+        .is_some()
+}
 
-    Ok(())
+/// Hash only the editable source subtree, so unrelated setting updates do not cause conflicts.
+fn conversion_revision(
+    config: &PlainTextConversionSettings,
+    recovery: Option<&serde_json::Value>,
+) -> Result<String> {
+    let raw = match recovery {
+        Some(original) => original.clone(),
+        None => serde_json::to_value(config).context("failed to serialize conversion settings")?,
+    };
+    let bytes = serde_json::to_vec(&canonical_json(raw))
+        .context("failed to serialize conversion revision")?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
+}
+
+/// Keep revision hashing independent of JSON object ordering while preserving rule array order.
+fn canonical_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => {
+            let entries: std::collections::BTreeMap<_, _> = object
+                .into_iter()
+                .map(|(key, value)| (key, canonical_json(value)))
+                .collect();
+            serde_json::Value::Object(entries.into_iter().collect())
+        }
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(canonical_json).collect())
+        }
+        other => other,
+    }
 }
 
 /// 校验打开剪贴板窗口时选中分组的字符串编码，避免非法设置值落盘。
@@ -222,17 +537,7 @@ fn validate_window_open_group(value: &str) -> Result<()> {
     Ok(())
 }
 
-/// 归一化快捷键字面量，供跨字段校验忽略大小写和多余空白。
-fn normalize_shortcut_value(value: &str) -> String {
-    value
-        .split('+')
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .map(str::to_ascii_lowercase)
-        .collect::<Vec<_>>()
-        .join("+")
-}
-
+/// 深合并对象，数组和叶节点按整体替换。
 fn deep_merge(base: &mut serde_json::Value, patch: serde_json::Value) {
     match (base, patch) {
         (serde_json::Value::Object(base_map), serde_json::Value::Object(patch_map)) => {

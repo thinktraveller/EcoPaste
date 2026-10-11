@@ -49,6 +49,64 @@
       "plain": "已识别明文备份。"
     }
   },
+  "plainTextConversion": {
+    "addRule": "添加规则",
+    "builtinTitle": "内置规则",
+    "collapseBlankLines": "合并连续空行",
+    "collapseHint": "仅合并提取正文时的连续空行；代码正文和未识别标记的普通文本保持原样。",
+    "description": "调整 Markdown、HTML 转为纯文本的方式，并添加按顺序执行的替换规则。保存后仅在主动转换当前剪贴板时使用。",
+    "emptyRules": "尚未添加自定义替换规则。",
+    "enabled": "启用",
+    "errorFallback": "无法完成操作，请检查规则后重试。",
+    "htmlInput": "HTML",
+    "imageStyle": "图片说明",
+    "inputFormat": "示例格式",
+    "linkStyle": "链接",
+    "listStyle": "普通列表",
+    "literal": "普通文本",
+    "mode": "匹配方式",
+    "moveDown": "下移",
+    "moveUp": "上移",
+    "newRuleName": "替换规则 {{index}}",
+    "options": {
+      "alt": "保留说明文字",
+      "omit": "忽略",
+      "readableMarkers": "使用可读列表符号",
+      "space": "单个空格",
+      "status": "保留勾选状态",
+      "tab": "制表符 Tab",
+      "textOnly": "只保留正文",
+      "title": "只保留标题",
+      "titleAndUrl": "标题附带网址",
+      "url": "只保留网址"
+    },
+    "pattern": "查找内容",
+    "patternHint": "保留真实空格和换行，查找内容不能为空。",
+    "previewAction": "预览效果",
+    "previewEmpty": "预览结果会显示在这里。",
+    "previewHint": "手动输入示例，使用当前未保存的规则草稿预览，不读取或改写系统剪贴板，也不写入历史记录。",
+    "previewInput": "输入示例",
+    "previewOutput": "纯文本结果",
+    "previewTitle": "示例预览",
+    "previewUnchanged": "结果与输入相同。",
+    "recoveryHint": "无效配置已被隔离，运行中暂用默认规则；原始内容仍保留。修复后保存或恢复默认并保存，会替换原配置。",
+    "recoveryRaw": "保留的原始配置",
+    "recoveryTitle": "原规则需要修复",
+    "regex": "正则表达式",
+    "regexHint": "正则替换支持 $1、${name} 引用捕获组，$$ 表示 $。采用 Rust regex，不支持前后查找和模式内回溯引用。",
+    "replacement": "替换为",
+    "replacementHint": "留空表示删除匹配内容。普通文本模式下 $1 和 \\n 按原文输出；换行请直接输入。",
+    "restoreDefaults": "恢复默认规则",
+    "ruleName": "规则名称",
+    "rulesHint": "按列表顺序对去格式后的全文执行，包括普通文本和代码正文；仅主动转换时生效。最多 32 条，停用规则也计入。",
+    "rulesTitle": "自定义替换",
+    "ruleTitle": "规则 {{index}}",
+    "saved": "已保存去格式规则",
+    "tableSeparator": "表格列分隔",
+    "taskStyle": "任务列表",
+    "textInput": "文本 / Markdown",
+    "title": "去格式规则"
+  },
   "schema": {
     "captureKinds": {
       "files": "文件和文件夹",
@@ -92,6 +150,9 @@
       },
       "control": {
         "title": "系统入口"
+      },
+      "conversion": {
+        "title": "去格式"
       },
       "copy": {
         "title": "复制反馈"
@@ -137,6 +198,10 @@
       },
       "window": {
         "title": "剪贴板窗口"
+      },
+      "windowShortcuts": {
+        "description": "常用列表动作可以改绑；导航、预览与数字快速粘贴保持默认。",
+        "title": "剪贴板窗口快捷键"
       }
     },
     "settings": {
@@ -309,6 +374,13 @@
             "description": "在系统托盘显示 EcoPaste 图标。",
             "title": "系统托盘图标"
           }
+        }
+      },
+      "conversion": {
+        "rules": {
+          "controlLabel": "管理",
+          "description": "调整 Markdown、HTML 去格式行为，并管理普通文本或正则替换规则。",
+          "title": "去格式规则"
         }
       },
       "copy": {
@@ -527,6 +599,11 @@
         }
       },
       "shortcuts": {
+        "convertToPlainText": {
+          "description": "将当前剪贴板的 Markdown、HTML 或富文本转为纯文本，保留正文和代码，不自动粘贴。图片、文件及只有 RTF 的内容保持不变。",
+          "placeholder": "点击录制全局快捷键",
+          "title": "转换当前剪贴板为纯文本"
+        },
         "openClipboard": {
           "description": "打开或隐藏剪贴板窗口。",
           "placeholder": "Alt+C",
@@ -632,6 +709,53 @@
           },
           "title": "打开时选中范围"
         }
+      },
+      "windowShortcuts": {
+        "copy": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "复制选中记录"
+        },
+        "delete": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "删除选中记录"
+        },
+        "deleteForward": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "删除选中记录（另一入口）"
+        },
+        "favorite": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "收藏选中记录"
+        },
+        "note": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "编辑备注"
+        },
+        "open": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "打开选中记录"
+        },
+        "paste": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "粘贴选中记录"
+        },
+        "pastePlain": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "纯文本粘贴选中记录"
+        },
+        "pin": {
+          "description": "仅在剪贴板窗口生效；清空可禁用。",
+          "placeholder": "点击录制窗口快捷键",
+          "title": "置顶选中记录"
+        }
       }
     },
     "tabs": {
@@ -661,6 +785,14 @@
   "search": {
     "empty": "没有找到相关设置",
     "placeholder": "搜索配置项"
+  },
+  "shortcutSettings": {
+    "active": "已在系统注册",
+    "failed": "未生效：{{reason}}",
+    "paused": "录入期间暂停，结束后恢复注册",
+    "reserved": "保留窗口动作",
+    "restore": "恢复默认",
+    "restoreWindow": "恢复所有窗口动作默认键"
   },
   "status": {
     "alwaysOn": "默认能力",

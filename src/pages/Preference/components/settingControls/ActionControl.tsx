@@ -13,6 +13,7 @@ import {
   changeStorageLocation,
   cleanResourceCache,
   type ExportHistoryBackupResult,
+  getPlainTextConversionEditor,
   getWindowLifecycleSnapshot,
   inspectHistoryBackup,
   listClipboardGroups,
@@ -31,12 +32,14 @@ import { GITHUB_URL } from "@/constants/urls";
 import { WINDOW_LABEL } from "@/constants/windows";
 import { resetSettings } from "@/stores/settings";
 import type { ClipboardGroupRecord } from "@/types/clipboard";
+import type { PlainTextConversionEditor } from "@/types/settings";
 import { getModalApi } from "@/utils/feedback";
 import { log } from "@/utils/log";
 import type { PreferenceSetting } from "../../types/preferences";
 import { translatePreferenceControlLabel } from "../../utils/preferenceI18n";
 import BackupExportModal from "../BackupExportModal";
 import ClipboardGroupManagerModal from "../ClipboardGroupManagerModal";
+import PlainTextConversionModal from "../PlainTextConversionModal";
 import ControlFrame from "./ControlFrame";
 
 const BACKUP_EXTENSION = "ecopastebak";
@@ -44,6 +47,7 @@ const ABOUT_CHECK_UPDATES_SETTING_ID = "about.checkUpdates";
 const ABOUT_GITHUB_SETTING_ID = "about.github";
 const CLEAN_CACHE_SETTING_ID = "localData.cleanCache";
 const CUSTOM_GROUPS_SETTING_ID = "organizing.customGroups";
+const CONVERSION_RULES_SETTING_ID = "conversion.rules";
 const DATA_DIRECTORY_SETTING_ID = "localData.dataDirectory";
 const EXPORT_BACKUP_SETTING_ID = "backup.exportHistory";
 const IMPORT_BACKUP_SETTING_ID = "backup.importHistory";
@@ -103,6 +107,8 @@ const ActionControl: FC<ActionControlProps> = (props) => {
   const [loading, setLoading] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [groupManagerOpen, setGroupManagerOpen] = useState(false);
+  const [conversionEditor, setConversionEditor] =
+    useState<PlainTextConversionEditor | null>(null);
   const [groupManagerGroups, setGroupManagerGroups] = useState<
     ClipboardGroupRecord[]
   >([]);
@@ -252,6 +258,33 @@ const ActionControl: FC<ActionControlProps> = (props) => {
     }
   };
 
+  /**
+   * 拉取原始恢复状态和版本标记后挂载编辑草稿，每次打开使用最新配置。
+   */
+  const openConversionEditor = async () => {
+    setLoading(true);
+    try {
+      const editor = await runWithKeepalive(
+        "open-conversion-editor",
+        getPlainTextConversionEditor,
+      );
+      setConversionEditor(editor);
+    } catch {
+      return;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const closeConversionEditor = () => {
+    setConversionEditor(null);
+  };
+
+  const handleConversionSaved = () => {
+    setConversionEditor(null);
+    markActionComplete();
+  };
+
   const openWindowLifecycleDiagnostics = async () => {
     setLoading(true);
     try {
@@ -347,6 +380,11 @@ const ActionControl: FC<ActionControlProps> = (props) => {
 
     if (setting.id === CUSTOM_GROUPS_SETTING_ID) {
       await openGroupManager();
+      return;
+    }
+
+    if (setting.id === CONVERSION_RULES_SETTING_ID) {
+      await openConversionEditor();
       return;
     }
 
@@ -464,6 +502,14 @@ const ActionControl: FC<ActionControlProps> = (props) => {
           onCancel={closeGroupManager}
           onSaved={handleGroupManagerSaved}
           open={groupManagerOpen}
+        />
+      ) : null}
+
+      {conversionEditor ? (
+        <PlainTextConversionModal
+          editor={conversionEditor}
+          onCancel={closeConversionEditor}
+          onSaved={handleConversionSaved}
         />
       ) : null}
 

@@ -55,9 +55,9 @@
     "logoAlt": "EcoPaste logo",
     "moreActions": "More actions",
     "openPreference": "Preferences",
-    "pin": "Pin window",
+    "pin": "Pin window (keep open)",
     "searchPlaceholder": "Search clipboard...",
-    "unpin": "Unpin"
+    "unpin": "Unpin window"
   },
   "note": {
     "placeholder": "Add a note for this item...",
@@ -85,6 +85,7 @@
     "copySelected": "Copy selected item",
     "createGroup": "Create group",
     "deleteSelected": "Delete selected item",
+    "deleteSelectedAlternate": "Delete selected item (alternate)",
     "favoriteSelected": "Favorite / unfavorite",
     "focusSearch": "Focus search",
     "navigate": "Navigate up/down",
